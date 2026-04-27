@@ -62,6 +62,31 @@
         color: #2c2a1f;
       }
       .update-notice[hidden] { display: none; }
+      /* v1.6.5: welcome notice — CWS 自動更新後翻譯成功 toast 順帶提示一次 */
+      .welcome-notice {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-top: 6px;
+        padding: 6px 10px;
+        background: #ecfdf3;
+        border: 1px solid #b6efc9;
+        border-radius: 6px;
+        font-size: 12px;
+        color: #1d3a26;
+      }
+      .welcome-notice[hidden] { display: none; }
+      .welcome-notice strong { color: #117a3e; }
+      .welcome-notice .wn-msg { flex: 1; }
+      .welcome-notice .wn-dismiss {
+        background: none;
+        border: 0;
+        color: #6e6e73;
+        font-size: 11px;
+        cursor: pointer;
+        padding: 0 4px;
+      }
+      .welcome-notice .wn-dismiss:hover { color: #1d1d1f; }
       .update-notice .un-link {
         color: #0071e3;
         text-decoration: none;
@@ -138,6 +163,11 @@
         <a class="un-link" id="un-link" href="#" target="_blank" rel="noopener"></a>
         <button class="un-dismiss" id="un-dismiss" type="button" title="今天不再提示">×</button>
       </div>
+      <div class="welcome-notice" id="welcome-notice" hidden>
+        <span>🎉</span>
+        <span class="wn-msg" id="wn-msg"></span>
+        <button class="wn-dismiss" id="wn-dismiss" type="button" title="今天不再提示">×</button>
+      </div>
       <div class="bar"><div class="bar-fill" id="fill"></div></div>
     </div>
   `;
@@ -161,11 +191,14 @@
 
   // Toast 自動關閉開關
   let toastAutoHide = true;
+  // v1.6.8: Toast master switch — false 時 SK.showToast 入口直接 return
+  let showProgressToast = true;
 
-  browser.storage.sync.get(['toastOpacity', 'toastPosition', 'toastAutoHide']).then((s) => {
+  browser.storage.sync.get(['toastOpacity', 'toastPosition', 'toastAutoHide', 'showProgressToast']).then((s) => {
     applyToastOpacity(s.toastOpacity);
     applyToastPosition(s.toastPosition);
     if (typeof s.toastAutoHide === 'boolean') toastAutoHide = s.toastAutoHide;
+    if (typeof s.showProgressToast === 'boolean') showProgressToast = s.showProgressToast;
   });
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'sync' && changes.toastOpacity) {
@@ -176,6 +209,11 @@
     }
     if (area === 'sync' && changes.toastAutoHide) {
       toastAutoHide = changes.toastAutoHide.newValue ?? true;
+    }
+    if (area === 'sync' && changes.showProgressToast) {
+      showProgressToast = changes.showProgressToast.newValue ?? true;
+      // 切到 false 即時隱藏目前 toast（不等下一次 showToast 觸發）
+      if (!showProgressToast && SK.hideToast) SK.hideToast();
     }
   });
 
@@ -194,6 +232,17 @@
   }
   updateNoticeLink.addEventListener('click', dismissUpdateNotice);
   updateNoticeDismiss.addEventListener('click', (e) => { e.preventDefault(); dismissUpdateNotice(); });
+
+  // v1.6.5: welcome notice element + 「×」標記今日已顯示（每日節流）
+  const welcomeNoticeEl = shadow.getElementById('welcome-notice');
+  const welcomeNoticeMsg = shadow.getElementById('wn-msg');
+  const welcomeNoticeDismiss = shadow.getElementById('wn-dismiss');
+  function dismissWelcomeNotice() {
+    welcomeNoticeEl.hidden = true;
+    try { browser.runtime.sendMessage({ type: 'WELCOME_NOTICE_TOAST_SHOWN' }).catch(() => {}); }
+    catch { /* runtime context invalidated when extension reload */ }
+  }
+  welcomeNoticeDismiss.addEventListener('click', (e) => { e.preventDefault(); dismissWelcomeNotice(); });
   const toastTimerEl = shadow.getElementById('timer');
   const toastFillEl = shadow.getElementById('fill');
   shadow.getElementById('close').addEventListener('click', () => SK.hideToast());
@@ -231,7 +280,15 @@
    * kind: 'loading' | 'success' | 'error'
    * opts: { progress?, startTimer?, stopTimer?, autoHideMs?, detail?, mismatch? }
    */
+  // v1.6.8: master switch 查詢函式，與 SK.shouldDisableInFrame 同 pattern
+  // 暴露給呼叫端（例如未來 content.js fast-path 跳過 buildToastOptions）與 regression spec 用
+  SK.shouldShowToast = function shouldShowToast() {
+    return showProgressToast;
+  };
+
   SK.showToast = function showToast(kind, msg, opts = {}) {
+    // v1.6.8: master switch 關閉時完全不顯示（不渲染 DOM、不發訊息）
+    if (!SK.shouldShowToast()) return;
     if (toastHideHandle) {
       clearTimeout(toastHideHandle);
       toastHideHandle = null;
@@ -259,6 +316,14 @@
       updateNoticeEl.hidden = false;
     } else {
       updateNoticeEl.hidden = true;
+    }
+
+    // v1.6.5: welcome notice（CWS 剛升級提示，每日節流由呼叫端判斷）
+    if (opts.welcomeNotice && opts.welcomeNotice.version) {
+      welcomeNoticeMsg.innerHTML = `<strong>已升級至 v${opts.welcomeNotice.version}</strong> — 點工具列圖示看新功能`;
+      welcomeNoticeEl.hidden = false;
+    } else {
+      welcomeNoticeEl.hidden = true;
     }
 
     if (opts.progress != null) {

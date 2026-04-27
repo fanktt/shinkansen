@@ -7,7 +7,7 @@
 - 最後更新：2026-04-25（v1.5.4）
 - 目標平台：Chrome（Manifest V3）
 - 作業系統：macOS 26
-- 目前 Extension 版本：1.6.4
+- 目前 Extension 版本：1.6.8
 
 ---
 
@@ -31,7 +31,7 @@ Shinkansen 是一款 Chrome 擴充功能，將英文（或其他外語）網頁�
 
 ## 2. 功能範圍
 
-### 2.1 已實作（v1.6.4 為止）
+### 2.1 已實作（v1.6.8 為止）
 
 詳細版本歷史見 [`CHANGELOG.md`](CHANGELOG.md)。
 

@@ -181,6 +181,11 @@ export const DEFAULT_SETTINGS = {
   // v1.1.3: Toast 自動關閉——翻譯完成/錯誤等 toast 在數秒後自動消失。
   // 預設開啟。關閉時翻譯完成 toast 需手動點 × 或點擊外部區域才會消失。
   toastAutoHide: true,
+  // v1.6.8: 是否顯示翻譯進度通知（toast 系統 master switch）。
+  // 預設 true 維持現有行為。false 時 SK.showToast() 入口直接 return：
+  // 不建 DOM、不開 Shadow root、不發訊息（與單純調 opacity=0 不同——後者仍會渲染）。
+  // 使用情境：使用者翻譯流量大、不在乎個別頁面進度，希望全靜音。
+  showProgressToast: true,
   // v1.0.21: 頁面層級繁體中文偵測開關。開啟時若整頁文字以繁中為主則跳過不翻譯；
   // 關閉時不做頁面層級檢查（元素層級仍會個別跳過繁中段落）。
   // Gmail 等介面語言為繁中但內容多為英文的網站，可關閉此選項。
@@ -207,6 +212,10 @@ export const DEFAULT_SETTINGS = {
   // v1.6.1: 「不再顯示更新提示」toggle。預設 false（顯示提示）。
   // 對應 storage.local 的 updateAvailable 物件由 lib/update-check.js 寫入，不在 sync。
   disableUpdateNotice: false,
+  // v1.6.6: 工具列「翻譯本頁」按鈕對應的 preset slot（1/2/3）。
+  // 預設 slot 2 = Flash（與 v1.4.12 開始 popup 按鈕硬碼映射的行為一致）。
+  // 使用者可在一般設定改成其他 preset，按 popup 按鈕等同按該 slot 的快速鍵。
+  popupButtonSlot: 2,
   // v1.5.7: 自訂 OpenAI-compatible Provider。
   // engine='openai-compat' 的 preset 會走 lib/openai-compat.js 透過 chat.completions
   // endpoint 翻譯，可接 OpenRouter / Together / DeepSeek / Groq / Ollama 等 provider。
@@ -279,6 +288,14 @@ export async function getSettings() {
   const { [CUSTOM_PROVIDER_API_KEY]: cpApiKey = '' } = await browser.storage.local.get(CUSTOM_PROVIDER_API_KEY);
   merged.customProvider.apiKey = cpApiKey;
   return merged;
+}
+
+// v1.6.6: 工具列「翻譯本頁」按鈕的 preset slot 解析
+// raw 來自 storage.sync.popupButtonSlot（可能是 number / string / undefined / 0 / 999）
+// 不在 1/2/3 範圍一律 fallback 2（與 v1.4.12 起的 popup 硬碼行為一致）
+export function pickPopupSlot(raw) {
+  const n = Number(raw);
+  return [1, 2, 3].includes(n) ? n : 2;
 }
 
 export async function setSettings(patch) {

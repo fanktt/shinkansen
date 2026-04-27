@@ -7,6 +7,40 @@
 
 ## v1.6.x
 
+**v1.6.8** — 新增「顯示翻譯進度通知」master switch（一般設定分頁），可完全關閉 toast。
+
+  - **使用者回報**：原本 toast 透明度最低只能設到 10%，沒有「完全關閉」選項；雖然視覺上看不見，但 DOM、Shadow root、訊息與計時器都還在跑。
+  - **新設定**：一般設定 →「翻譯進度通知」section 最上方加 checkbox「顯示翻譯進度通知」（預設 ON 維持現行為），關閉後 `SK.showToast()` 入口直接 return（不渲染 DOM、不發訊息）；切換時即時生效（`onChanged` listener 同步狀態並隱藏目前 toast）。
+  - **新 helper** `SK.shouldShowToast()`（與 `SK.shouldDisableInFrame` 同 pattern）：暴露 master switch 查詢給呼叫端與 regression spec 共用。
+  - **新 regression spec** `test/regression/toast-master-switch.spec.js`：驗證 `SK.shouldShowToast()` 跟著 `storage.showProgressToast` 變化（預設 true / set false 同步 / set true 恢復）。SANITY 已驗（query 函式改成永遠 true → 第 2 步 fail）。
+
+**v1.6.7** — 自訂模型支援本機後端（llama.cpp / Ollama 等）：API Key 允許留空。
+
+  - **修使用者回報的 bug**：自訂模型分頁的「測試」按鈕在 API Key 為空時硬擋報錯（`✗ API Key 為空。`），導致 llama.cpp 等不需要 key 的本機後端使用者無法測試也無法翻譯。
+  - **三處同步移除 / 條件化**：(1) `background.js#testCustomProvider` 拿掉「API Key 為空」前置 guard；(2) `background.js#handleTranslateCustom` 拿掉 `cp.apiKey` 必填 throw；(3) `lib/openai-compat.js#translateChunk` 拿掉同樣 throw、且 fetch headers 在 apiKey 為空時不送 `Authorization`（OpenAI 相容規範允許省略）。商用後端（OpenAI / OpenRouter / DeepSeek 等）漏填 key 時自然回 401，錯誤訊息由 provider 提供（例如「Incorrect API key」），對使用者也很清楚。
+  - **UI 提示更新**：自訂模型分頁的 API Key 欄位 placeholder 與下方說明文字加上「本機 llama.cpp / Ollama 等可留空」。
+  - **新 unit spec 兩條**：apiKey 為空 → 不 throw 且 headers 不含 Authorization；apiKey undefined（settings 沒這欄位）→ 同上。SANITY 已驗（headers 改回硬送 → 兩條 fail）。
+
+**v1.6.6** — 新增「工具列『翻譯本頁』按鈕」可指定對應的翻譯預設。
+
+  - **新設定**：一般設定分頁多一個 section「工具列『翻譯本頁』按鈕」，dropdown 三選項顯示各 preset 的 label（例如「預設 1：Flash Lite / 預設 2：Flash / 預設 3：Google MT」），預設仍為 slot 2（與 v1.4.12 起的 popup 硬碼行為一致），現有使用者升級不會感受到任何行為差異。
+  - **改 popup.js**：「翻譯本頁」按鈕改送 `TRANSLATE_PRESET { slot: settings.popupButtonSlot }` 取代既有硬碼 `TOGGLE_TRANSLATE`；content.js 的 `TOGGLE_TRANSLATE` handler 仍保留作 backward-compat 路徑。
+  - **新 helper** `lib/storage.js#pickPopupSlot`：共用 slot 解析（合法 1/2/3 原樣回 / 其餘 fallback 2），popup.js 與 unit spec 共用同一段邏輯。
+  - **新 unit spec** `test/unit/popup-button-slot.spec.js`（4 條）：合法 / 字串 coerce / undefined fallback / 範圍外 fallback。SANITY 已驗（fallback 改 1 → 2 條 fail）。
+
+**v1.6.5** — 新增 CWS 自動更新後的「歡迎升級」提示（popup banner + 翻譯成功 toast 兩處）；同時修三個更新提示機制的潛在 bug。
+
+  - **新功能：CWS 自動更新後的歡迎提示**：使用者透過 Chrome Web Store 自動升級到 major/minor 新版時，下次開 popup 會看到綠色「🎉 已升級至 vX.Y」banner + 三條近期重大更新 bullet + 「知道了」按鈕（永久 dismiss）；翻譯成功 toast 也順帶顯示一次「已升級至 vX.Y — 點工具列圖示看新功能」（每日節流）。Patch 級自動更新（1.6.4 → 1.6.5）跳過避免高頻打擾。
+  - **新模組** `lib/release-highlights.js`：近期重大更新文字單一來源，下次新功能升級時改一處同步生效。
+  - **新模組** `lib/welcome-notice.js`：封裝 onInstalled handler 內的判斷邏輯（reason='update' + previousVersion + isWorthNotifying）方便 unit 測試。
+  - **release.sh 加 minor/major bump 提醒**：偵測到 major 或 minor 不同時印警告 + 暫停等使用者按 Enter 繼續或 Ctrl+C 中止，提醒檢查 RELEASE_HIGHLIGHTS 是否要更新（純內部升級可用通用條目「改善效能與穩定性」之類）。
+  - **修法：時區造成跨日重複顯示**：`new Date().toISOString().slice(0, 10)` 取的是 **UTC 日期**，台灣（UTC+8）使用者凌晨 0–8 點仍是 UTC 昨天，導致「今日已 dismiss」誤判為「跨日要重新顯示」（剛點過幾小時又看到）。新加 `localTodayKey()` helper 統一用本地時區，content-ns.js 鏡像一份（content script 不能 import lib），涵蓋 4 處（markUpdateNoticeShown / shouldShowTodayNotice / WELCOME_NOTICE_TOAST_SHOWN handler / maybeBuildXxxNotice）。
+  - **修法：banner 顯示前缺二次過濾**：popup / options banner 顯示條件原本只看「storage 內 updateAvailable 物件存在」，沒檢查 storage 內版本是否真的 > 當前版本。導致 storage 殘留 stale 資料時 banner 仍錯誤顯示「v1.6.4 可下載 你目前是 v1.6.4」這種詭異訊息。修法：三處（popup / options / content-ns）顯示前都加 `isWorthNotifying(storage.version, current)` 二次過濾。
+  - **修法（最關鍵）：CSS `display: flex` 覆寫 hidden attribute**：`.update-banner / .welcome-banner / .update-banner-row` 三處都寫 `display: flex`，class selector specificity 高於 user-agent stylesheet 的 `[hidden] { display: none }`，導致 hidden=true 仍顯示空殼 banner。從 v1.6.1 update banner 上線就潛在存在的 bug，但之前一直在測「storage 有資料」場景所以 JS 主動設 hidden=false 顯示，沒被觀察到。修法：三處 CSS 各加 `[hidden] { display: none !important }` 強制覆寫。
+  - **belt-and-suspenders 多層防禦**：(1) update-check 寫 storage 前 isWorthNotifying；(2) 偵測到 latest === current 主動清 storage；(3) 三層 UI 顯示前再 isWorthNotifying 過濾；(4) dismissed=true / disableUpdateNotice=true 永久關閉；(5) lastNoticeShownDate 每日節流（本地時區）。
+  - **新加 spec**：`test/unit/welcome-notice.spec.js`（9 條：major/minor 寫入、patch/install/browser_update/降版/缺 prev 不寫、RELEASE_HIGHLIGHTS 結構驗證）；`update-check.spec.js` 補 1 條 `localTodayKey` 用本地時區驗證。
+  - Full `npm test` 211 條（Playwright）+ 26 條（Jest）全綠。
+
 **v1.6.4** — 修 popup / 設定頁 update banner 點擊行為（彻底擺脫 a-tag navigate 的怪 bug）+ 加 patch 級更新節流避免高頻打擾。版號跳過 1.6.3（用作測試假 release）。
 
   - **修法 1：兩處 banner 從 `<a>` 改 `<button>`**：v1.6.1 ~ v1.6.2 期間 popup banner 點擊跳到 popup.html#、設定頁 banner 點擊跳到 options.html# 自身的 bug，根因是 `<a target="_blank" href="#">` 在 chrome popup 環境下不會開新分頁、會 navigate 到 href 自身。改成 `<button type="button">` 徹底擺脫 a-tag 預設 navigate。

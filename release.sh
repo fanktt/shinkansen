@@ -1,5 +1,5 @@
 #!/bin/bash
-# 用法: ./release.sh [--firefox] "改了什麼"
+# 用法：./release.sh [--firefox] "改了什麼"
 # 自動 commit、tag、push，GitHub Actions 會自動建 Release 並附 zip
 #
 # --firefox: 建立 Firefox 版 release（tag 為 vX.Y.Z-firefox）
@@ -20,6 +20,29 @@ if [ "$TARGET" = "firefox" ]; then
   TAG="v${VERSION}-firefox"
 else
   TAG="v${VERSION}"
+fi
+
+# v1.6.5: minor/major bump 時提醒檢查 RELEASE_HIGHLIGHTS 是否要更新
+# patch bump 不會觸發 welcome notice，跳過提醒
+PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+PREV_VER=${PREV_TAG#v}
+if [ -n "$PREV_VER" ]; then
+  NEW_MAJOR=$(echo "$VERSION" | cut -d. -f1)
+  NEW_MINOR=$(echo "$VERSION" | cut -d. -f2)
+  PREV_MAJOR=$(echo "$PREV_VER" | cut -d. -f1)
+  PREV_MINOR=$(echo "$PREV_VER" | cut -d. -f2)
+  if [ "$NEW_MAJOR" != "$PREV_MAJOR" ] || [ "$NEW_MINOR" != "$PREV_MINOR" ]; then
+    echo ""
+    echo "⚠️  Major / Minor bump 偵測到（v${PREV_VER} → v${VERSION}）"
+    echo "   此版會觸發 CWS 使用者的「歡迎升級」提示——請確認"
+    echo "   shinkansen/lib/release-highlights.js 的 RELEASE_HIGHLIGHTS 是否要更新。"
+    echo ""
+    echo "   - 有新功能 → 把最舊那條換成新功能描述"
+    echo "   - 純內部升級（重構 / 效能 / 修 bug） → 可用通用條目，例如："
+    echo "       '改善效能與穩定性，提升整體使用體驗'"
+    echo ""
+    read -p "   按 Enter 繼續發版、按 Ctrl+C 中止去更新 highlights ... " _ignore
+  fi
 fi
 
 git add -A

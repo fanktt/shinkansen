@@ -6,6 +6,12 @@
 
 > **[從 Chrome Web Store 安裝](https://chromewebstore.google.com/detail/shinkansen/pnhmlecoofeoofajcjenndnimhbodhlg)**（推薦）· [下載最新版本 zip](https://github.com/jimmysu0309/shinkansen/releases/latest) · 安裝教學與產品介紹見 [官方網頁](https://jimmysu0309.github.io/shinkansen/)
 
+## 近期重大更新
+
+- 新增**雙語對照模式**，原文 + 譯文並列顯示
+- 新增**中國用語黑名單**，明確要求 LLM 不能用視頻 / 軟件 / 數據等中國用語
+- 新增**自訂 AI 模型**功能，可接 OpenRouter / Claude / DeepSeek / Ollama 本機等百種模型
+
 ## 為什麼做這個專案
 
 既有的沉浸式翻譯工具需要將個人瀏覽內容傳送到第三方伺服器處理，隱私權難以掌控。Shinkansen 的設計從一開始就以隱私為核心：所有設定與資料都只存在你自己的電腦上；除了你自備的 Gemini API Key 直接連線 Google 之外，不會將任何資料外傳給其他第三方；原始碼完全公開，任何人都可以檢視它的安全性。
@@ -29,7 +35,7 @@
 - **三維 Rate Limiter**：RPM / TPM / RPD 滑動視窗，自動配合 Gemini API 配額
 - **用量追蹤**：記錄每次翻譯的 token 數與費用，附圖表與 CSV 匯出
 - **編輯譯文**：翻譯完成後可直接在頁面上修改譯文，適合要列印 PDF 或讓 Readwise Reader 抓取時，手動修正翻得不理想的地方
-- **跨 tab 延續翻譯**（v1.4.11 起）：在 tab A 按快速鍵翻譯後，從 A 點連結開新 tab B（含 Cmd+Click / `target="_blank"` / `window.open`），B 自動翻譯並繼承同一組 preset；新 tab 再開新 tab 也繼續
+- **跨 tab 延續翻譯**（v1.4.11 起）：在 tab A 按快速鍵翻譯後，從 A 點連結開新 tab B（含按住 Cmd（Mac）/ Ctrl（Windows）點連結 / `target="_blank"` / `window.open`），B 自動翻譯並繼承同一組 preset；新 tab 再開新 tab 也繼續
 - **自動翻譯指定網站**：在設定頁加入常看的網域，開啟該網站時自動翻譯，不用每次手動按快速鍵（翻譯通知會標示 `[自動翻譯]` 讓你知道是 whitelist 觸發）
 - **還原原文**：按同一組快速鍵即切換回原文，隨時對照
 - **Google Docs 翻譯**：自動偵測 Google Docs，開啟可翻譯的閱讀版並翻譯（詳見下方說明）
@@ -88,7 +94,7 @@ v1.4.12 起提供三組可自訂的翻譯預設，各綁一個快速鍵：
 - 翻譯中按任一快速鍵 → 立即取消翻譯
 - 已翻譯狀態下按任一快速鍵 → 還原原文（不分用哪個 preset 翻的）
 
-**跨 tab 延續翻譯**（v1.4.11 起）：在 tab A 按快速鍵翻譯後，從 A 點連結開新 tab B（Cmd+Click、`target="_blank"` 或 `window.open`），B 會自動翻譯且繼承同一組 preset——讓使用者可以一路按連結讀下去不用每個 tab 都按快速鍵。新 tab 再開新 tab 也繼續；手動打網址 / 從 bookmark 開 / 從外部 app 開的 tab 不繼承（openerTabId 為空）。按任一組快速鍵還原只影響當前 tab，不影響樹中其他 tab。
+**跨 tab 延續翻譯**（v1.4.11 起）：在 tab A 按快速鍵翻譯後，從 A 點連結開新 tab B（按住 Cmd（Mac）/ Ctrl（Windows）點連結、`target="_blank"` 或 `window.open`），B 會自動翻譯且繼承同一組 preset——讓使用者可以一路按連結讀下去不用每個 tab 都按快速鍵。新 tab 再開新 tab 也繼續；手動打網址 / 從 bookmark 開 / 從外部 app 開的 tab 不繼承（openerTabId 為空）。按任一組快速鍵還原只影響當前 tab，不影響樹中其他 tab。
 
 ## Google Translate 翻譯引擎
 
@@ -233,7 +239,7 @@ LLM 在翻譯長文時，前後文的人名、地名翻譯容易出現不一致�
 
 ## 目前版本
 
-v1.6.4 — 完整功能清單與規格詳見 [SPEC.md](SPEC.md)。
+v1.6.8 — 完整功能清單與規格詳見 [SPEC.md](SPEC.md)。
 
 ## 授權
 

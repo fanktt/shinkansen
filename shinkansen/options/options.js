@@ -5,6 +5,7 @@ import { browser } from '../lib/compat.js';
 import { DEFAULT_SETTINGS, DEFAULT_SYSTEM_PROMPT, DEFAULT_GLOSSARY_PROMPT, DEFAULT_SUBTITLE_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS } from '../lib/storage.js';
 import { TIER_LIMITS } from '../lib/tier-limits.js';
 import { formatTokens, formatUSD } from '../lib/format.js';
+import { isWorthNotifying } from '../lib/update-check.js'; // v1.6.5
 
 // 向下相容：舊程式碼大量使用 DEFAULTS，保留別名避免大範圍搜尋取代
 const DEFAULTS = DEFAULT_SETTINGS;
@@ -139,6 +140,8 @@ async function load() {
   $('toastPosition').value = s.toastPosition || 'bottom-right';
   // v1.1.3: Toast 自動關閉
   $('toastAutoHide').checked = s.toastAutoHide !== false;
+  // v1.6.8: Toast master switch
+  $('showProgressToast').checked = s.showProgressToast !== false;
 
   // v1.0.21: 頁面層級繁中偵測開關
   $('skipTraditionalChinesePage').checked = s.skipTraditionalChinesePage !== false;
@@ -226,6 +229,20 @@ async function load() {
   }
   refreshPresetKeyBindings();
 
+  // v1.6.6: 工具列「翻譯本頁」按鈕的 preset slot dropdown
+  // 用 preset.label 動態填 option 內容（讓使用者看到「Flash Lite / Flash / Google MT」這類標籤而非「預設 1/2/3」）
+  const popupSlotSel = $('popup-button-slot');
+  if (popupSlotSel) {
+    for (const slot of [1, 2, 3]) {
+      const p = presets.find(x => x.slot === slot) || DEFAULTS.translatePresets.find(x => x.slot === slot);
+      const label = (p.label && p.label.trim()) || `預設 ${slot}`;
+      const opt = popupSlotSel.querySelector(`option[value="${slot}"]`);
+      if (opt) opt.textContent = `預設 ${slot}：${label}`;
+    }
+    const slotVal = Number(s.popupButtonSlot);
+    popupSlotSel.value = ([1, 2, 3].includes(slotVal) ? slotVal : 2).toString();
+  }
+
   // v1.5.7: cache presets 與 customProvider 給用量紀錄「模型」欄的 modelToLabel() 用
   _presetsCache = presets;
   _customProviderCache = cp || { model: '' };
@@ -243,8 +260,10 @@ async function load() {
     const disableUpdateNotice = s.disableUpdateNotice === true;
     if (!disableUpdateNotice) {
       const { updateAvailable } = await browser.storage.local.get('updateAvailable');
-      if (updateAvailable && updateAvailable.version && updateAvailable.releaseUrl) {
-        const manifest = browser.runtime.getManifest();
+      const manifest = browser.runtime.getManifest();
+      // v1.6.5: belt-and-suspenders — 必須 storage.version 真的 > current 才顯示
+      if (updateAvailable && updateAvailable.version && updateAvailable.releaseUrl
+          && isWorthNotifying(updateAvailable.version, manifest.version)) {
         $('update-banner-row').hidden = false;
         $('update-banner-version').textContent = `v${updateAvailable.version}（你目前是 v${manifest.version}）`;
         // click handler 改用 document delegation 在外面掛（避免 init() async race）
@@ -450,6 +469,8 @@ async function save() {
     toastPosition: $('toastPosition').value,
     // v1.1.3: Toast 自動關閉
     toastAutoHide: $('toastAutoHide').checked,
+    // v1.6.8: Toast master switch（false 完全不顯示，連訊息都不發）
+    showProgressToast: $('showProgressToast').checked,
     // v1.5.0: 雙語對照視覺標記
     translationMarkStyle: getSelectedMarkStyle(),
     // v1.0.21: 頁面層級繁中偵測開關
@@ -491,6 +512,11 @@ async function save() {
       const label = ($(`preset-label-${slot}`).value || '').trim() || `預設 ${slot}`;
       return { slot, engine, model, label };
     }),
+    // v1.6.6: 工具列「翻譯本頁」按鈕對應的 preset slot
+    popupButtonSlot: (() => {
+      const v = Number($('popup-button-slot')?.value);
+      return [1, 2, 3].includes(v) ? v : 2;
+    })(),
     // v1.0.29: 固定術語表（save 前先同步 UI → 記憶體）
     fixedGlossary: (() => {
       // 同步全域表格的最新 UI 值
@@ -837,6 +863,8 @@ function sanitizeImport(raw) {
     tpmOverride:         { type: 'number', min: 1, nullable: true },
     rpdOverride:         { type: 'number', min: 1, nullable: true },
     toastAutoHide:       { type: 'boolean' },
+    popupButtonSlot:     { type: 'number', min: 1, max: 3, int: true }, // v1.6.6
+    showProgressToast:   { type: 'boolean' }, // v1.6.8
   };
 
   for (const [key, rule] of Object.entries(topRules)) {

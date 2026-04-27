@@ -146,6 +146,19 @@
     </section>
 
     <section>
+      <h2>工具列「翻譯本頁」按鈕</h2>
+      <p class="hint">點擊瀏覽器工具列上的 Shinkansen 圖示後，跳出視窗中「翻譯本頁」按鈕要使用哪一組設定（與翻譯快速鍵共用三組預設）</p>
+      <label class="popup-button-slot-label">
+        對應的翻譯預設
+        <select id="popup-button-slot">
+          <option value="1">預設 1</option>
+          <option value="2">預設 2</option>
+          <option value="3">預設 3</option>
+        </select>
+      </label>
+    </section>
+
+    <section>
       <h2>網域規則</h2>
       <label>
         自動翻譯網站（每行一個網域，進入時自動翻譯）
@@ -185,6 +198,11 @@
 
     <section>
       <h2>翻譯進度通知</h2>
+      <label class="toggle">
+        <input type="checkbox" id="showProgressToast" checked>
+        顯示翻譯進度通知
+        <small class="muted">關閉後將完全不顯示翻譯期間的進度通知（包含成功 / 失敗訊息也不顯示）</small>
+      </label>
       <label>
         顯示位置
         <select id="toastPosition">
@@ -498,13 +516,13 @@
       <label>
         API Key
         <div class="api-key-row">
-          <input type="password" id="cp-apiKey" placeholder="貼上對應 provider 的 API Key">
+          <input type="password" id="cp-apiKey" placeholder="貼上對應 provider 的 API Key（本機 llama.cpp / Ollama 等可留空）">
           <button type="button" id="cp-toggle-apiKey" class="ghost-btn" aria-label="顯示 API Key">顯示</button>
           <button type="button" id="cp-test-apiKey" class="ghost-btn" aria-label="測試 API Key">測試</button>
         </div>
         <div id="cp-test-apiKey-result" class="api-test-result" hidden></div>
         <small class="muted">
-          僅存在你的瀏覽器本機（與 Gemini API Key 同樣不跨裝置同步、不上傳任何伺服器）。
+          僅存在你的瀏覽器本機（與 Gemini API Key 同樣不跨裝置同步、不上傳任何伺服器）；本機後端（llama.cpp / Ollama 等）可留空
         </small>
       </label>
       <label>
