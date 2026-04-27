@@ -192,6 +192,11 @@
     // v1.1.3: Toast 自動關閉——翻譯完成/錯誤等 toast 在數秒後自動消失。
     // 預設開啟。關閉時翻譯完成 toast 需手動點 × 或點擊外部區域才會消失。
     toastAutoHide: true,
+    // v1.6.8: 是否顯示翻譯進度通知（toast 系統 master switch）。
+    // 預設 true 維持現有行為。false 時 SK.showToast() 入口直接 return：
+    // 不建 DOM、不開 Shadow root、不發訊息（與單純調 opacity=0 不同——後者仍會渲染）。
+    // 使用情境：使用者翻譯流量大、不在乎個別頁面進度，希望全靜音。
+    showProgressToast: true,
     // v1.0.21: 頁面層級繁體中文偵測開關。開啟時若整頁文字以繁中為主則跳過不翻譯；
     // 關閉時不做頁面層級檢查（元素層級仍會個別跳過繁中段落）。
     // Gmail 等介面語言為繁中但內容多為英文的網站，可關閉此選項。
@@ -218,6 +223,10 @@
     // v1.6.1: 「不再顯示更新提示」toggle。預設 false（顯示提示）。
     // 對應 storage.local 的 updateAvailable 物件由 lib/update-check.js 寫入，不在 sync。
     disableUpdateNotice: false,
+    // v1.6.6: 工具列「翻譯本頁」按鈕對應的 preset slot（1/2/3）。
+    // 預設 slot 2 = Flash（與 v1.4.12 開始 popup 按鈕硬碼映射的行為一致）。
+    // 使用者可在一般設定改成其他 preset，按 popup 按鈕等同按該 slot 的快速鍵。
+    popupButtonSlot: 2,
     // v1.5.7: 自訂 OpenAI-compatible Provider。
     // engine='openai-compat' 的 preset 會走 lib/openai-compat.js 透過 chat.completions
     // endpoint 翻譯，可接 OpenRouter / Together / DeepSeek / Groq / Ollama 等 provider。
@@ -888,7 +897,6 @@
     if (!texts?.length) return { parts: [], usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 } };
     const cp = settings.customProvider || {};
     const { baseUrl, model, systemPrompt, temperature, apiKey } = cp;
-    if (!apiKey) throw new Error("\u5C1A\u672A\u8A2D\u5B9A\u81EA\u8A02 Provider \u7684 API Key\uFF0C\u8ACB\u81F3\u8A2D\u5B9A\u9801\u586B\u5165\u3002");
     if (!model) throw new Error("\u5C1A\u672A\u8A2D\u5B9A\u81EA\u8A02 Provider \u7684\u6A21\u578B ID\u3002");
     const useSeqMarkers = texts.length > 1;
     const markedTexts = useSeqMarkers ? texts.map((t, i) => `\xAB${i + 1}\xBB ${t}`) : texts;
@@ -905,7 +913,7 @@
       stream: false
     };
     const url = resolveChatCompletionsUrl(baseUrl);
-    const headers = { "Authorization": `Bearer ${apiKey}` };
+    const headers = apiKey ? { "Authorization": `Bearer ${apiKey}` } : {};
     await debugLog("info", "api", "openai-compat request", {
       baseUrl,
       model,
@@ -1819,6 +1827,13 @@
   // shinkansen/lib/update-check.js
   var GITHUB_RELEASES_URL = "https://api.github.com/repos/jimmysu0309/shinkansen/releases/latest";
   var STORAGE_KEY = "updateAvailable";
+  function localTodayKey() {
+    const d = /* @__PURE__ */ new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
   function parseVersion(v) {
     const cleaned = String(v || "").replace(/^v/, "").split("-")[0];
     const parts = cleaned.split(".").map((s) => parseInt(s, 10) || 0);
@@ -1899,10 +1914,26 @@
     const existing = await browser.storage.local.get(STORAGE_KEY);
     const cur = existing[STORAGE_KEY];
     if (!cur) return;
-    const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     await browser.storage.local.set({
-      [STORAGE_KEY]: { ...cur, lastNoticeShownDate: today }
+      [STORAGE_KEY]: { ...cur, lastNoticeShownDate: localTodayKey() }
     });
+  }
+
+  // shinkansen/lib/welcome-notice.js
+  var STORAGE_KEY2 = "welcomeNotice";
+  async function maybeWriteWelcomeNotice({ reason, previousVersion, currentVersion }) {
+    if (reason !== "update") return false;
+    if (!previousVersion) return false;
+    if (!isWorthNotifying(currentVersion, previousVersion)) return false;
+    await browser.storage.local.set({
+      [STORAGE_KEY2]: {
+        version: currentVersion,
+        fromVersion: previousVersion,
+        dismissed: false,
+        lastNoticeShownDate: null
+      }
+    });
+    return true;
   }
 
   // shinkansen/background.js
@@ -2057,12 +2088,6 @@
       debugLog("warn", "system", "persistStickyTabs failed", { error: err.message });
     }
   }
-  browser.runtime.onStartup?.addListener(() => {
-    if (!browser.storage.session) {
-      browser.storage.local.remove("stickyTabs").catch(() => {
-      });
-    }
-  });
   browser.tabs.onCreated.addListener(async (tab) => {
     await hydrateStickyTabs();
     const openerId = tab.openerTabId;
@@ -2157,6 +2182,28 @@
     UPDATE_NOTICE_DISMISSED: {
       async: true,
       handler: () => markUpdateNoticeShown()
+    },
+    // v1.6.5: 「知道了」按鈕（popup banner）標記永久 dismissed=true
+    WELCOME_NOTICE_DISMISSED: {
+      async: true,
+      handler: async () => {
+        const { welcomeNotice } = await browser.storage.local.get("welcomeNotice");
+        if (!welcomeNotice) return;
+        await browser.storage.local.set({
+          welcomeNotice: { ...welcomeNotice, dismissed: true }
+        });
+      }
+    },
+    // v1.6.5: toast 顯示過 welcome notice 後標記今天日期（每日節流，避免每次翻譯都嘮叨）
+    WELCOME_NOTICE_TOAST_SHOWN: {
+      async: true,
+      handler: async () => {
+        const { welcomeNotice } = await browser.storage.local.get("welcomeNotice");
+        if (!welcomeNotice) return;
+        await browser.storage.local.set({
+          welcomeNotice: { ...welcomeNotice, lastNoticeShownDate: localTodayKey() }
+        });
+      }
     },
     // v1.5.7: API Key 測試 — 設定頁「測試」按鈕觸發。
     // Gemini 走 GET models/<model>?key=<key> 不耗 token；
@@ -2550,12 +2597,13 @@
     const apiKey = (payload?.apiKey || "").trim();
     if (!baseUrl) return { ok: false, message: "Base URL \u70BA\u7A7A\u3002" };
     if (!model) return { ok: false, message: "\u6A21\u578B ID \u70BA\u7A7A\u3002" };
-    if (!apiKey) return { ok: false, message: "API Key \u70BA\u7A7A\u3002" };
     const url = /\/chat\/completions$/.test(baseUrl) ? baseUrl : baseUrl + "/chat/completions";
     try {
+      const headers = { "Content-Type": "application/json" };
+      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
       const resp = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        headers,
         body: JSON.stringify({
           model,
           messages: [{ role: "user", content: "ping" }],
@@ -2582,7 +2630,6 @@
   async function handleTranslateCustom(payload, sender, cacheTag = "_oc", cpOverrides = null, applyFixedGlossary = true, applyForbiddenTerms = true) {
     const settings = await getSettings();
     const cp = { ...settings.customProvider || {}, ...cpOverrides || {} };
-    if (!cp.apiKey) throw new Error("\u5C1A\u672A\u8A2D\u5B9A\u81EA\u8A02 Provider \u7684 API Key\uFF0C\u8ACB\u81F3\u8A2D\u5B9A\u9801\u586B\u5165\u3002");
     if (!cp.baseUrl) throw new Error("\u5C1A\u672A\u8A2D\u5B9A\u81EA\u8A02 Provider \u7684 Base URL\u3002");
     if (!cp.model) throw new Error("\u5C1A\u672A\u8A2D\u5B9A\u81EA\u8A02 Provider \u7684\u6A21\u578B ID\u3002");
     const texts = payload.texts;
@@ -2821,10 +2868,20 @@
     browser.tabs.sendMessage(tab.id, { type: "TRANSLATE_PRESET", payload: { slot } }).catch(() => {
     });
   });
-  browser.runtime.onInstalled.addListener(async ({ reason }) => {
-    debugLog("info", "system", `extension ${reason}`, { version: browser.runtime.getManifest().version });
+  browser.runtime.onInstalled.addListener(async ({ reason, previousVersion }) => {
+    debugLog("info", "system", `extension ${reason}`, {
+      version: browser.runtime.getManifest().version,
+      previousVersion: previousVersion || null
+    });
     const currentVersion = browser.runtime.getManifest().version;
     await checkVersionAndClear(currentVersion);
+    const wrote = await maybeWriteWelcomeNotice({ reason, previousVersion, currentVersion });
+    if (wrote) {
+      debugLog("info", "system", "welcome notice written", {
+        from: previousVersion,
+        to: currentVersion
+      });
+    }
     if (reason === "update" || reason === "install") {
       try {
         const { apiKey: syncKey } = await browser.storage.sync.get("apiKey");
