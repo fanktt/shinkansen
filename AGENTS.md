@@ -52,6 +52,15 @@ Bumping `manifest.json` version must sync these files (enforced by `test/version
 
 Commits, tags (`v{manifest_version}`), pushes. GitHub Actions (`release.yml`) creates release with `shinkansen-vX.Y.Z.zip`.
 
+## Fork Policy
+
+This repo is forked from upstream. `main` stays unchanged; all work happens on `develop`. Upstream `master` is merged back periodically.
+
+- **Never modify existing files under `shinkansen/`**. Firefox port changes are applied via:
+  - New files: `manifest.firefox.json`, `background-firefox.js`, `lib/firefox-compat.js`
+  - Build-time string replacement (options/privacy copy) via `tools/build.js`
+- This keeps upstream merges conflict-free.
+
 ## Conventions
 
 - Regression tests: `test/regression/`. Pure logic unit tests: `test/unit/` or `test/jest-unit/`.

@@ -14,14 +14,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Get version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
-      - name: Zip shinkansen folder
+      - name: Build Chrome zip
         run: |
           zip -r shinkansen-${{ steps.version.outputs.VERSION }}.zip shinkansen/
           cp shinkansen-${{ steps.version.outputs.VERSION }}.zip shinkansen.zip
+
+      - name: Build Firefox zip
+        run: |
+          node tools/build.js --target firefox --outdir dist
+          cp dist/shinkansen-v${VERSION}-firefox.zip shinkansen-v${VERSION}-firefox.zip
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -30,6 +46,7 @@ jobs:
           files: |
             shinkansen-${{ steps.version.outputs.VERSION }}.zip
             shinkansen.zip
+            shinkansen-${{ steps.version.outputs.VERSION }}-firefox.zip
           generate_release_notes: true
           # GitHub 預設「建立時間最新 = Latest」會被補建舊 tag 偷走 Latest 標籤。
           # legacy 改用 semver：highest version 才是 Latest，與補建順序無關。
