@@ -61,6 +61,22 @@ This repo is forked from upstream. `main` stays unchanged; all work happens on `
   - Build-time string replacement (options/privacy copy) via `tools/build.js`
 - This keeps upstream merges conflict-free.
 
+## Upstream Sync Flow
+
+```bash
+# One-time setup (already done):
+# git remote add upstream https://github.com/jimmysu0309/shinkansen.git
+
+git fetch upstream
+git checkout develop
+git merge upstream/main
+npm run test:all
+node tools/build.js --target firefox --outdir dist
+git push
+```
+
+Conflict risk is low (only new files added, no source modifications). When upstream bumps `manifest.json` version, also bump `manifest.firefox.json` version to match.
+
 ## Conventions
 
 - Regression tests: `test/regression/`. Pure logic unit tests: `test/unit/` or `test/jest-unit/`.
