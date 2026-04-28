@@ -75,6 +75,35 @@
 7. \u4E0D\u52A0\u53E5\u865F\uFF1A\u53E5\u672B\u4E0D\u8981\u52A0\u300C\u3002\u300D\uFF0C\u5B57\u5E55\u662F\u53E3\u8A9E\u7247\u6BB5\uFF0C\u53E5\u865F\u6703\u8B93\u756B\u9762\u770B\u8D77\u4F86\u751F\u786C\u3002
 8. \u5FE0\u5BE6\u4FDD\u7559\u4E0D\u96C5\u8A5E\u5F59\uFF1A\u82E5\u539F\u6587\u5305\u542B\u7C97\u4FD7\u7528\u8A9E\uFF08\u5982 Fuck, fucking retarded\uFF09\uFF0C\u52D9\u5FC5\u76F4\u7FFB\u5176\u5F37\u70C8\u60C5\u7DD2\uFF08\u5982\u300C\u5E79\u300D\u3001\u300C\u4ED6\u5ABD\u7684\u767D\u75F4\u300D\uFF09\uFF0C\u56B4\u7981\u9032\u884C\u4EFB\u4F55\u9053\u5FB7\u5BE9\u67E5\u6216\u59D4\u5A49\u6F64\u98FE\u3002
 </critical_rules>`;
+  var DEFAULT_ASR_SUBTITLE_SYSTEM_PROMPT = `\u4F60\u662F\u5C08\u696D\u7684\u82F1\u6587 ASR(\u81EA\u52D5\u8A9E\u97F3\u8FA8\u8B58)\u5B57\u5E55\u7FFB\u8B6F\u54E1,\u5C07\u82F1\u6587 YouTube \u81EA\u52D5\u5B57\u5E55\u7FFB\u8B6F\u6210\u53F0\u7063\u7E41\u9AD4\u4E2D\u6587\u3002
+
+<input_format>
+\u8F38\u5165\u662F JSON \u9663\u5217,\u6BCF\u500B\u5143\u7D20 {"s": \u8D77\u59CB\u6BEB\u79D2, "e": \u7D50\u675F\u6BEB\u79D2, "t": \u82F1\u6587\u7247\u6BB5}\u3002
+\u7BC4\u4F8B:[{"s":500,"e":1200,"t":"the auto"},{"s":1200,"e":1800,"t":"captions are"},{"s":1800,"e":3500,"t":"really broken"}]
+</input_format>
+
+<task>
+1. \u4F9D\u8A9E\u610F\u81EA\u7531\u5408\u4F75\u9130\u8FD1\u7247\u6BB5\u6210\u5B8C\u6574\u53E5\u5B50(\u53EF\u8DE8\u591A\u500B\u5143\u7D20,\u901A\u5E38 1 \u53E5\u6DB5\u84CB 3-10 \u500B\u7247\u6BB5)
+2. \u4FEE\u6B63\u660E\u986F\u7684 ASR \u8FA8\u8B58\u932F\u5B57(\u540C\u97F3\u5B57\u3001\u5C08\u6709\u540D\u8A5E)
+3. \u7FFB\u6210\u53F0\u7063\u7E41\u9AD4\u4E2D\u6587,\u52A0\u4E0A\u9069\u7576\u6A19\u9EDE(\u9017\u865F\u3001\u554F\u865F\u3001\u9A5A\u5606\u865F;\u53E5\u5C3E\u4E0D\u52A0\u53E5\u865F)
+4. \u7528\u53F0\u7063\u81EA\u7136\u53E3\u8A9E,\u907F\u514D\u66F8\u9762\u8A9E\u8154\u8ABF
+</task>
+
+<output_format>
+\u56DE\u50B3 JSON \u9663\u5217,\u6BCF\u500B\u5143\u7D20 {"s": \u8A72\u53E5\u8D77\u59CB ms, "e": \u8A72\u53E5\u7D50\u675F ms, "t": \u4E2D\u6587\u8B6F\u6587}\u3002
+- s \u5FC5\u9808\u7B49\u65BC\u67D0\u500B\u8F38\u5165\u5143\u7D20\u7684 s
+- e \u5FC5\u9808\u7B49\u65BC\u67D0\u500B\u8F38\u5165\u5143\u7D20\u7684 e(\u901A\u5E38\u662F\u8A72\u53E5\u6700\u5F8C\u4E00\u500B\u7247\u6BB5\u7684 e)
+- \u4E0D\u8981\u5305 \`\`\`json fence,\u76F4\u63A5\u8F38\u51FA\u7D14 JSON \u9663\u5217
+- \u4E0D\u8981\u4EFB\u4F55\u89E3\u91CB\u3001\u958B\u5834\u767D\u3001\u5F8C\u8A18
+\u7BC4\u4F8B:[{"s":500,"e":3500,"t":"\u81EA\u52D5\u5B57\u5E55\u771F\u7684\u58DE\u4E86"}]
+</output_format>
+
+<critical_rules>
+1. \u7981\u7528\u4E2D\u570B\u5927\u9678\u7528\u8A9E(\u7DB2\u7D61\u2192\u7DB2\u8DEF\u3001\u8996\u983B\u2192\u5F71\u7247\u3001\u8EDF\u4EF6\u2192\u8EDF\u9AD4\u3001\u6578\u64DA\u2192\u8CC7\u6599\u3001\u7528\u6236\u2192\u4F7F\u7528\u8005)
+2. \u5C08\u6709\u540D\u8A5E\u4FDD\u7559\u82F1\u6587(\u4EBA\u540D\u3001\u54C1\u724C\u3001\u7E2E\u5BEB\u5982 AI\u3001NASA\u3001CPU)
+3. \u5FE0\u5BE6\u4FDD\u7559\u7C97\u4FD7\u7528\u8A9E(Fuck \u2192 \u5E79),\u4E0D\u5BE9\u67E5\u3001\u4E0D\u59D4\u5A49\u5316
+4. \u4E0D\u8981\u907A\u6F0F\u8F38\u5165\u7247\u6BB5:\u8F38\u51FA\u9663\u5217\u52A0\u7E3D\u61C9\u6DB5\u84CB\u6240\u6709\u8F38\u5165\u6642\u9593\u7BC4\u570D
+</critical_rules>`;
   var DEFAULT_FORBIDDEN_TERMS = [
     { forbidden: "\u8996\u983B", replacement: "\u5F71\u7247", note: "" },
     { forbidden: "\u97F3\u983B", replacement: "\u97F3\u8A0A", note: "" },
@@ -166,7 +195,13 @@
       // 字幕本來就走獨立 prompt 設計，且字幕短句 LLM 不太會誤翻黑名單詞，套用收益小、
       // 而每批 prompt 多 300–500 token 的開銷在高頻字幕場景累積可觀。
       applyFixedGlossary: false,
-      applyForbiddenTerms: false
+      applyForbiddenTerms: false,
+      // v1.6.20: ASR(YouTube 自動字幕)分句模式。內部三值,UI 簡化為單一 toggle(v1.6.23):
+      //   'heuristic'   = 預設分句:純 client-side 啟發式,延遲最低(~1-2s)。toggle 關閉時用。
+      //   'progressive' = 混合模式(預設):先 heuristic 顯示(秒出),同時 LLM 跑覆蓋成更精緻版本。
+      //                   兼顧速度與品質。toggle 開啟時用(預設)。
+      //   'llm'         = 純 LLM 自由分句(內部保留,UI 不再可選)。
+      asrMode: "progressive"
     },
     // v0.35 新增：並行翻譯 rate limiter 設定
     // tier 對應 Gemini API 付費層級(free / tier1 / tier2),決定 RPM/TPM/RPD 上限
@@ -227,24 +262,46 @@
     // 預設 slot 2 = Flash（與 v1.4.12 開始 popup 按鈕硬碼映射的行為一致）。
     // 使用者可在一般設定改成其他 preset，按 popup 按鈕等同按該 slot 的快速鍵。
     popupButtonSlot: 2,
+    // v1.6.13: 自動翻譯網站(白名單)觸發時要用哪一組 preset。預設 slot 2 = Flash。
+    // 修法前自動翻譯路徑直接 SK.translatePage() 不帶 slot,fallback 全域 geminiConfig.model;
+    // 使用者改 preset model 後 Alt+S 走新 model,但白名單路徑仍走全域 → UX 不一致。
+    // 改成走 SK.handleTranslatePreset(autoTranslateSlot) 後,白名單與快速鍵行為對齊。
+    autoTranslateSlot: 2,
+    // v1.6.14: per-model 計價覆蓋表。Google 改價時內建表(lib/model-pricing.js)會過時,
+    // 使用者可在「Gemini 分頁 → 模型計價」針對 lite/flash/pro 個別覆蓋。
+    // 結構:{ [modelName]: { inputPerMTok, outputPerMTok } };空欄位或缺 entry → fallback 內建表。
+    modelPricingOverrides: {},
     // v1.5.7: 自訂 OpenAI-compatible Provider。
     // engine='openai-compat' 的 preset 會走 lib/openai-compat.js 透過 chat.completions
     // endpoint 翻譯，可接 OpenRouter / Together / DeepSeek / Groq / Ollama 等 provider。
     // apiKey 不存 sync（getSettings 會從 storage.local 的 customProviderApiKey 注入），
     // systemPrompt 獨立於 Gemini（黑名單與固定術語表仍共用、由 buildEffectiveSystemInstruction 注入），
     // 但「預設值」與 Gemini 相同——使用者第一次打開分頁就有完整可用的 prompt，要動再動。
-    // 計價必須使用者自填（OpenRouter 等百種模型不可能內建查表，0 = 不顯示費用）。
+    //
+    // v1.6.16: baseUrl/model/pricing 預填 OpenRouter DeepSeek V4 Pro,使用者只要填 API Key
+    // 就能啟動。資料來源 https://openrouter.ai/deepseek/deepseek-v4-pro(2026-04 校準)。
+    // 既有使用者升級後若 storage 內已有 customProvider entry(例如打開過自訂模型分頁),
+    // 此預設不會覆蓋(getSettings 對 customProvider 走淺 merge,saved 在後);要套用新預設
+    // 需手動清空欄位或重新匯入設定。新使用者第一次打開設定頁就看到預填值。
     customProvider: {
-      baseUrl: "",
-      // 例如 https://openrouter.ai/api/v1
-      model: "",
-      // 例如 anthropic/claude-sonnet-4-5
+      baseUrl: "https://openrouter.ai/api/v1",
+      model: "deepseek/deepseek-v4-pro",
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
       // 預設與 Gemini 相同；空字串時 adapter 套用簡短 fallback
       temperature: 0.7,
-      inputPerMTok: 0,
-      // 自填，0 = 不顯示費用
-      outputPerMTok: 0
+      inputPerMTok: 0.435,
+      // OpenRouter DeepSeek V4 Pro Standard tier 參考價
+      outputPerMTok: 0.87,
+      // v1.6.18: thinking 控制(統一 5 級對映 + 進階 JSON 透傳)。
+      //   thinkingLevel:'auto' 不送任何 thinking 參數,讓 provider 自選預設(最安全 fallback);
+      //   'off' / 'low' / 'medium' / 'high' 由 lib/openai-compat-thinking.js 偵測 provider 後
+      //   翻譯成對應 API 寫法(OpenRouter unified reasoning / DeepSeek extra_body.thinking /
+      //   Claude thinking.type / OpenAI o reasoning_effort / Grok reasoning_effort / Qwen
+      //   extra_body.enable_thinking)。
+      //   extraBodyJson:使用者自填 JSON 字串,deep merge 到 request body,可覆蓋自動 mapping
+      //   並加 provider 專屬參數(top_k / metadata 等)。預設空白(進階使用者才需要)。
+      thinkingLevel: "auto",
+      extraBodyJson: ""
     }
   };
   var API_KEY_STORAGE_KEY = "apiKey";
@@ -435,6 +492,10 @@
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+  function pickThinkingConfig(model) {
+    const isPro = /pro/i.test(String(model || ""));
+    return { thinkingLevel: isPro ? "low" : "minimal" };
+  }
   function extractQuotaDimension(json) {
     const details = json?.error?.details;
     if (!Array.isArray(details)) return null;
@@ -529,8 +590,9 @@
         topP,
         topK,
         maxOutputTokens: glossaryMaxOutput,
-        // v0.74: 關閉思考功能，避免思考 token 吃掉 maxOutputTokens 額度。
-        thinkingConfig: { thinkingBudget: 0 }
+        // v1.6.12:Pro 系列改用 thinkingLevel='low'(無法完全關閉 thinking),Flash
+        // 系列用 'minimal'(thoughts=0,等同舊 budget=0)。詳見 pickThinkingConfig 註解。
+        thinkingConfig: pickThinkingConfig(model)
       },
       safetySettings: [
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
@@ -682,8 +744,9 @@
         topP,
         topK,
         maxOutputTokens,
-        // 關閉思考功能，避免思考 token 吃掉 maxOutputTokens 額度。
-        thinkingConfig: { thinkingBudget: 0 }
+        // v1.6.12:依模型動態選 thinkingLevel('low' for Pro, 'minimal' for Flash)。
+        // 詳見 pickThinkingConfig 註解;Pro 強制 thinking 不能用 budget=0。
+        thinkingConfig: pickThinkingConfig(model)
       },
       safetySettings: [
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
@@ -811,6 +874,83 @@
     return { parts, usage: chunkUsage, hadMismatch: false };
   }
 
+  // shinkansen/lib/openai-compat-thinking.js
+  function detectProvider(baseUrl, model) {
+    const url = String(baseUrl || "").toLowerCase();
+    const m = String(model || "").toLowerCase();
+    if (/openrouter\.ai/.test(url)) return "openrouter";
+    if (/api\.deepseek\.com/.test(url)) return "deepseek";
+    if (/api\.anthropic\.com|claude/.test(url)) return "claude";
+    if (/api\.x\.ai/.test(url)) return "grok";
+    if (/api\.openai\.com/.test(url) && /^o[1-9]/.test(m)) return "openai-o";
+    if (/dashscope|aliyun/.test(url)) return "qwen";
+    if (/^anthropic\/|claude/.test(m)) return "claude";
+    if (/^deepseek\//.test(m)) return "deepseek";
+    if (/^openai\/o|^o[1-9]/.test(m)) return "openai-o";
+    if (/grok/.test(m)) return "grok";
+    if (/qwen|qwq/.test(m)) return "qwen";
+    return "unknown";
+  }
+  function buildNativeThinking(provider, level) {
+    if (!level || level === "auto") return {};
+    switch (provider) {
+      case "openrouter":
+        if (level === "off") return { reasoning: { exclude: true } };
+        return { reasoning: { effort: level } };
+      case "deepseek":
+        return { extra_body: { thinking: { type: level === "off" ? "disabled" : "enabled" } } };
+      case "claude":
+        if (level === "off") return { thinking: { type: "disabled" } };
+        return { thinking: { type: "adaptive" } };
+      case "openai-o":
+        return { reasoning_effort: level === "off" ? "minimal" : level };
+      case "grok":
+        if (level === "off") return {};
+        return { reasoning_effort: level };
+      case "qwen":
+        return { extra_body: { enable_thinking: level !== "off" } };
+      case "unknown":
+      default:
+        return {};
+    }
+  }
+  function safeParseJson(raw, onWarn) {
+    if (!raw || typeof raw !== "string") return {};
+    const trimmed = raw.trim();
+    if (!trimmed) return {};
+    try {
+      const v = JSON.parse(trimmed);
+      if (v && typeof v === "object" && !Array.isArray(v)) return v;
+      if (onWarn) onWarn("extraBodyJson \u4E0D\u662F\u7269\u4EF6,\u5DF2\u5FFD\u7565");
+      return {};
+    } catch (e) {
+      if (onWarn) onWarn(`extraBodyJson \u89E3\u6790\u5931\u6557: ${e.message}`);
+      return {};
+    }
+  }
+  function deepMerge(a, b) {
+    if (!isPlainObject(b)) return b === void 0 ? a : b;
+    if (!isPlainObject(a)) return { ...b };
+    const out = { ...a };
+    for (const k of Object.keys(b)) {
+      if (isPlainObject(a[k]) && isPlainObject(b[k])) {
+        out[k] = deepMerge(a[k], b[k]);
+      } else {
+        out[k] = b[k];
+      }
+    }
+    return out;
+  }
+  function isPlainObject(v) {
+    return v !== null && typeof v === "object" && !Array.isArray(v);
+  }
+  function buildThinkingPayload({ baseUrl, model, level, extraBodyRaw, onWarn }) {
+    const provider = detectProvider(baseUrl, model);
+    const native = buildNativeThinking(provider, level);
+    const extra = safeParseJson(extraBodyRaw, onWarn);
+    return deepMerge(native, extra);
+  }
+
   // shinkansen/lib/openai-compat.js
   var MAX_BACKOFF_MS2 = 8e3;
   function sleep2(ms) {
@@ -896,13 +1036,22 @@
   async function translateChunk2(texts, settings, glossary, fixedGlossary, forbiddenTerms) {
     if (!texts?.length) return { parts: [], usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 } };
     const cp = settings.customProvider || {};
-    const { baseUrl, model, systemPrompt, temperature, apiKey } = cp;
+    const { baseUrl, model, systemPrompt, temperature, apiKey, thinkingLevel, extraBodyJson } = cp;
     if (!model) throw new Error("\u5C1A\u672A\u8A2D\u5B9A\u81EA\u8A02 Provider \u7684\u6A21\u578B ID\u3002");
     const useSeqMarkers = texts.length > 1;
     const markedTexts = useSeqMarkers ? texts.map((t, i) => `\xAB${i + 1}\xBB ${t}`) : texts;
     const joined = markedTexts.join(DELIMITER);
     const baseSystem = typeof systemPrompt === "string" && systemPrompt.trim() ? systemPrompt : "\u4F60\u662F\u5C08\u696D\u7684\u82F1\u6587 \u2192 \u7E41\u9AD4\u4E2D\u6587\uFF08\u53F0\u7063\u6163\u7528\u8A9E\uFF09\u7FFB\u8B6F\u52A9\u7406\uFF0C\u50C5\u8F38\u51FA\u8B6F\u6587\u4E0D\u52A0\u4EFB\u4F55\u8AAA\u660E\u3002";
     const effectiveSystem = buildEffectiveSystemInstruction(baseSystem, texts, joined, glossary, fixedGlossary, forbiddenTerms);
+    const thinkingPayload = buildThinkingPayload({
+      baseUrl,
+      model,
+      level: thinkingLevel || "auto",
+      extraBodyRaw: extraBodyJson || "",
+      onWarn: (msg) => {
+        debugLog("warn", "api", `customProvider thinking config: ${msg}`);
+      }
+    });
     const body = {
       model,
       messages: [
@@ -910,7 +1059,8 @@
         { role: "user", content: joined }
       ],
       temperature: typeof temperature === "number" ? temperature : 0.7,
-      stream: false
+      stream: false,
+      ...thinkingPayload
     };
     const url = resolveChatCompletionsUrl(baseUrl);
     const headers = apiKey ? { "Authorization": `Bearer ${apiKey}` } : {};
@@ -1796,8 +1946,15 @@
     "gemini-3-flash-preview": { inputPerMTok: 0.5, outputPerMTok: 3 },
     "gemini-3.1-pro-preview": { inputPerMTok: 2, outputPerMTok: 12 }
   };
-  function getPricingForModel(model) {
+  function getPricingForModel(model, settings = null) {
     if (!model) return null;
+    const override = settings?.modelPricingOverrides?.[model];
+    if (override && Number.isFinite(Number(override.inputPerMTok)) && Number.isFinite(Number(override.outputPerMTok))) {
+      return {
+        inputPerMTok: Number(override.inputPerMTok),
+        outputPerMTok: Number(override.outputPerMTok)
+      };
+    }
     return MODEL_PRICING[model] || null;
   }
 
@@ -2061,21 +2218,23 @@
     }
   });
   var stickyTabs = /* @__PURE__ */ new Map();
-  var _stickyHydrated = false;
+  var _stickyHydratingPromise = null;
   var _stickyStorage = (browser.storage && browser.storage.session) ?? browser.storage.local;
-  async function hydrateStickyTabs() {
-    if (_stickyHydrated) return;
-    _stickyHydrated = true;
-    try {
-      const { stickyTabs: saved } = await _stickyStorage.get("stickyTabs");
-      if (saved && typeof saved === "object") {
-        for (const [tabId, slot] of Object.entries(saved)) {
-          if (typeof slot === "number") stickyTabs.set(Number(tabId), slot);
+  function hydrateStickyTabs() {
+    if (_stickyHydratingPromise) return _stickyHydratingPromise;
+    _stickyHydratingPromise = (async () => {
+      try {
+        const { stickyTabs: saved } = await _stickyStorage.get("stickyTabs");
+        if (saved && typeof saved === "object") {
+          for (const [tabId, slot] of Object.entries(saved)) {
+            if (typeof slot === "number") stickyTabs.set(Number(tabId), slot);
+          }
         }
+      } catch (err) {
+        debugLog("warn", "system", "hydrateStickyTabs failed", { error: err.message });
       }
-    } catch (err) {
-      debugLog("warn", "system", "hydrateStickyTabs failed", { error: err.message });
-    }
+    })();
+    return _stickyHydratingPromise;
   }
   async function persistStickyTabs() {
     try {
@@ -2143,6 +2302,43 @@
           "_yt",
           yt.applyFixedGlossary === true,
           yt.applyForbiddenTerms === true
+        );
+      }
+    },
+    // v1.6.20: ASR(YouTube 自動字幕)專用——LLM 自由合句 + 時間戳對齊路徑(D' 模式,
+    // timestamp mode)。
+    // 與 TRANSLATE_SUBTITLE_BATCH 的差異:
+    //   - 走獨立 system prompt(DEFAULT_ASR_SUBTITLE_SYSTEM_PROMPT),允許 LLM 自由合句
+    //   - texts 是單一元素(整視窗包成 [{s,e,t}] JSON 字串),不分批
+    //   - cache key tag '_yt_asr',跟 _yt 分區避免互打
+    //   - 字幕 settings 沿用 ytSubtitle(model / temperature / pricing),只覆寫 systemInstruction
+    TRANSLATE_ASR_SUBTITLE_BATCH: {
+      async: true,
+      handler: async (payload, sender) => {
+        const _tReceived = Date.now();
+        const s = await getSettings();
+        const _settingsMs = Date.now() - _tReceived;
+        debugLog("info", "youtube", "asr subtitle batch received", {
+          inputBytes: payload?.texts?.[0]?.length || 0,
+          settingsMs: _settingsMs
+        });
+        const yt = s.ytSubtitle || {};
+        const geminiOverrides = {
+          // ASR 模式不沿用使用者自訂的 ytSubtitle.systemPrompt(那是逐條翻譯版本,規則不適用 ASR JSON 模式)
+          systemInstruction: DEFAULT_ASR_SUBTITLE_SYSTEM_PROMPT,
+          // ASR 合句需要一點推理,但翻譯仍應穩定;沿用 ytSubtitle.temperature
+          temperature: yt.temperature ?? 0.1
+        };
+        if (yt.model) geminiOverrides.model = yt.model;
+        const pricingOverride = yt.pricing && yt.pricing.inputPerMTok != null ? yt.pricing : null;
+        return handleTranslate(
+          payload,
+          sender,
+          geminiOverrides,
+          pricingOverride,
+          "_yt_asr",
+          false,
+          false
         );
       }
     },
@@ -2433,7 +2629,7 @@
     const effectiveSettings = Object.keys(geminiOverrides).length > 0 ? { ...settings, geminiConfig: { ...settings.geminiConfig, ...geminiOverrides } } : settings;
     let effectivePricing = pricingOverride;
     if (!effectivePricing && geminiOverrides.model) {
-      effectivePricing = getPricingForModel(geminiOverrides.model);
+      effectivePricing = getPricingForModel(geminiOverrides.model, settings);
     }
     if (!effectivePricing) {
       effectivePricing = settings.pricing;
