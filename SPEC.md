@@ -7,7 +7,7 @@
 - 最後更新：2026-04-25（v1.5.4）
 - 目標平台：Chrome（Manifest V3）
 - 作業系統：macOS 26
-- 目前 Extension 版本：1.6.8
+- 目前 Extension 版本：1.7.0
 
 ---
 
@@ -31,7 +31,7 @@ Shinkansen 是一款 Chrome 擴充功能，將英文（或其他外語）網頁�
 
 ## 2. 功能範圍
 
-### 2.1 已實作（v1.6.8 為止）
+### 2.1 已實作（v1.7.0 為止）
 
 詳細版本歷史見 [`CHANGELOG.md`](CHANGELOG.md)。
 
@@ -39,7 +39,7 @@ Shinkansen 是一款 Chrome 擴充功能，將英文（或其他外語）網頁�
 |---------|------|------|
 | 網頁翻譯 | ✅ | Option+S（Gemini）/ Option+G（Google Translate）切換；單語覆蓋 / 雙語對照雙模式；漸進分批注入；還原原文 |
 | 雙語對照模式 | ✅ | v1.5.0 新增；popup toggle 切換；譯文以 `<shinkansen-translation>` wrapper 形式 append 在原段落後/內；4 種視覺標記 |
-| YouTube 字幕翻譯 | ✅ | XHR 預翻 + on-the-fly 備援；時間視窗批次；seek/rate 補償；字幕框展開置中；SPA 導航自動重啟 |
+| YouTube 字幕翻譯 | ✅ | XHR 預翻 + on-the-fly 備援；時間視窗批次；seek/rate 補償；字幕框展開置中；SPA 導航自動重啟；ASR(自動字幕)走獨立合句路徑(v1.6.20) |
 | SPA 支援 | ✅ | History API 攔截 + URL 輪詢；MutationObserver rescan；Content Guard；stickyTranslate 續翻 |
 | 段落偵測 | ✅ | walker + mixed-content fragment；PRE 條件排除；leaf DIV / grid cell 補抓；nav 放行 |
 | 佔位符序列化 | ✅ | 配對型 ⟦N⟧…⟦/N⟧ + 原子型 ⟦*N⟧；媒體保留；含圖連結重建 |
@@ -567,6 +567,8 @@ shinkansen/
 | type | payload | 回應 |
 |------|---------|------|
 | `TRANSLATE_BATCH` | `{ texts, slots, … }` | `{ ok, result, usage }` |
+| `TRANSLATE_SUBTITLE_BATCH` | `{ texts, glossary }` | `{ ok, result, usage }` — YouTube 字幕逐條翻譯(人工字幕路徑) |
+| `TRANSLATE_ASR_SUBTITLE_BATCH` | `{ texts: [json], glossary }` | `{ ok, result: [json], usage }` — v1.6.20:ASR 字幕專用,texts 是單一 [{s,e,t}] JSON 字串,LLM 自由合句後回 [{s,e,t}] JSON 字串 |
 | `EXTRACT_GLOSSARY` | `{ input }` | `{ ok, terms, _diag }` |
 | `LOG` | `{ level, category, message, data }` | — |
 | `LOG_USAGE` | `{ inputTokens, outputTokens, … }` | `{ ok }` |

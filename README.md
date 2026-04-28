@@ -4,17 +4,18 @@
 
 名稱「新幹線」象徵快速、平穩、流暢的閱讀體驗。
 
-> **[從 Chrome Web Store 安裝](https://chromewebstore.google.com/detail/shinkansen/pnhmlecoofeoofajcjenndnimhbodhlg)**（推薦）· [下載最新版本 zip](https://github.com/jimmysu0309/shinkansen/releases/latest) · 安裝教學與產品介紹見 [官方網頁](https://jimmysu0309.github.io/shinkansen/)
+> **[從 Chrome Web Store 安裝](https://chromewebstore.google.com/detail/shinkansen/pnhmlecoofeoofajcjenndnimhbodhlg)**（推薦）· [下載最新版本 zip](https://github.com/jimmysu0309/shinkansen/releases/latest) · 安裝教學與產品介紹見 [官方網頁](https://jimmysu0309.github.io/shinkansen/) · [功能變更紀錄](CHANGELOG.md)
 
 ## 近期重大更新
 
+- 新增**AI 智慧分句**，YouTube 自動產生字幕經 AI 重新分句，讓中文字幕更自然好讀
 - 新增**雙語對照模式**，原文 + 譯文並列顯示
 - 新增**中國用語黑名單**，明確要求 LLM 不能用視頻 / 軟件 / 數據等中國用語
 - 新增**自訂 AI 模型**功能，可接 OpenRouter / Claude / DeepSeek / Ollama 本機等百種模型
 
 ## 為什麼做這個專案
 
-既有的沉浸式翻譯工具需要將個人瀏覽內容傳送到第三方伺服器處理，隱私權難以掌控。Shinkansen 的設計從一開始就以隱私為核心：所有設定與資料都只存在你自己的電腦上；除了你自備的 Gemini API Key 直接連線 Google 之外，不會將任何資料外傳給其他第三方；原始碼完全公開，任何人都可以檢視它的安全性。
+既有的網頁翻譯工具大多需要將個人瀏覽內容傳送到第三方伺服器處理，隱私權難以掌控。Shinkansen 的設計從一開始就以隱私為核心：所有設定與資料都只存在你自己的電腦上；除了你自備的 Gemini API Key 直接連線 Google 之外，不會將任何資料外傳給其他第三方；原始碼完全公開，任何人都可以檢視它的安全性。
 
 ## 效能實測
 
@@ -124,15 +125,28 @@ Google Docs 的編輯畫面使用 Canvas 渲染文字，一般的網頁翻譯擴
 
 若你常看 YouTube 英文影片，可在設定頁的「YouTube 字幕」Tab 開啟自動翻譯，進入影片頁面後字幕翻譯會自動啟動，不需每次手動開關。
 
-**費用**
+### AI 智慧分句（v1.7 起，自動產生字幕專用）
 
-字幕翻譯與網頁翻譯共用同一套計費邏輯與用量追蹤。翻過的字幕自動快取，重播或拖回已翻段落完全不花錢。
+YouTube 自動產生字幕（沒有人工字幕的影片，CC 標記為 auto-generated）原本是「**按時間切割**」而非「按句子切割」——每條字幕只有 1-3 個英文字、沒有標點，逐條翻譯完全失去語意上下文，譯文會像被剁碎一樣難讀。
 
-**注意事項**
+Shinkansen v1.7 起對自動產生字幕導入專用流程：
 
-- 需要影片有英文字幕（手動上傳或自動生成皆可）
+- **分句改用 AI 重組**：把整批 ASR 片段送 Gemini，由 AI 依語意重新分句（合併短條成完整句子、補上標點），再翻譯。中文字幕從「破碎的詞」變成「完整的句子」。
+- **預設「混合模式」**：先用本地啟發式快速分句顯示（秒出，使用者不必等），背景同時跑 AI 分句，回來後用更精緻版本替換——兼顧速度與品質。
+- **字幕顯示 overlay 整句穩定**：自家 overlay 完全旁路 YouTube 原生 caption-segment（avoid「一個字一個字跳出來」），整句進整句出。控制列出現時自動上移避開進度條。
+- **可關閉**：如果只想要最低延遲、用 YouTube 原始分句邏輯翻，到設定頁「YouTube 字幕 → AI 分句模式」取消勾選即可。
+
+人工上傳字幕（professional / community-contributed）不受此設定影響，沿用原來的逐句翻譯路徑。
+
+### 費用
+
+字幕翻譯與網頁翻譯共用同一套計費邏輯與用量追蹤。翻過的字幕自動快取，重播或拖回已翻段落完全不花錢。AI 分句模式 token 用量略高於關閉時（多送一次語意分句的 prompt），但對中文閱讀體驗的提升明顯，建議開啟。
+
+### 注意事項
+
+- 需要影片有英文字幕（手動上傳或自動產生皆可）
 - 字幕翻譯使用獨立的 system prompt，可在設定頁「YouTube 字幕」Tab 自訂
-- 若 CC 未開啟，畫面會顯示提示請你先開啟字幕
+- 若 CC 未開啟，Shinkansen 會自動幫你開啟（每個影片 session 只主動開一次，尊重使用者後續手動關 CC）
 - 換影片後需重新開啟開關（或開啟自動翻譯）
 
 ## 翻譯快取與費用計算
@@ -239,7 +253,7 @@ LLM 在翻譯長文時，前後文的人名、地名翻譯容易出現不一致�
 
 ## 目前版本
 
-v1.6.8 — 完整功能清單與規格詳見 [SPEC.md](SPEC.md)。
+v1.7.0 — 完整功能清單與規格詳見 [SPEC.md](SPEC.md)。
 
 ## 授權
 

@@ -19,41 +19,23 @@ const MODEL_PRICING = Object.fromEntries(
 );
 
 
+// v1.6.15: 全域 #model dropdown 已移除（v1.4.12 起 preset modelOverride 涵蓋
+// 95%+ 場景,真實後備路徑剩 testGeminiKey 按鈕 + cache key 構建）。改讀
+// 「主要預設」(slot 2)的 model;若 slot 2 引擎不是 gemini → fallback 到
+// DEFAULTS.geminiConfig.model(避免 testGeminiKey 沒 model 可送)。
 function getSelectedModel() {
-  const sel = $('model').value;
-  if (sel === '__custom__') {
-    return ($('custom-model-input').value || '').trim() || DEFAULTS.geminiConfig.model;
+  const engineSel = $('preset-engine-2');
+  const modelSel = $('preset-model-2');
+  if (engineSel?.value === 'gemini' && modelSel?.value) {
+    return modelSel.value;
   }
-  return sel;
+  return DEFAULTS.geminiConfig.model;
 }
 
-// v0.64：切換自行輸入欄位的可見性
-function toggleCustomModelInput() {
-  const isCustom = $('model').value === '__custom__';
-  $('custom-model-row').hidden = !isCustom;
-}
-
-// Service Tier 價格倍率（以 Standard 為基準）
-// 來源：https://ai.google.dev/gemini-api/docs/flex-inference / priority-inference（2026-04-09）
-// Flex = 50% 折扣 → 0.5 倍；Priority = 最高 200% → 2.0 倍（保守估計）
-const SERVICE_TIER_MULTIPLIER = {
-  DEFAULT:  1.0,
-  STANDARD: 1.0,
-  FLEX:     0.5,
-  PRIORITY: 2.0,
-};
-
-// v0.64：模型變更 / Service Tier 變更 → 自動帶入參考價到模型計價欄位
-function applyModelPricing(model, tierOverride) {
-  const baseModel = model;
-  const p = MODEL_PRICING[baseModel];
-  if (!p) return; // 自行輸入或查不到參考價時不動現有值
-  const tier = tierOverride || $('serviceTier').value || 'DEFAULT';
-  const mult = SERVICE_TIER_MULTIPLIER[tier] ?? 1.0;
-  // 保留兩位小數，避免浮點誤差
-  $('inputPerMTok').value = +(p.input * mult).toFixed(2);
-  $('outputPerMTok').value = +(p.output * mult).toFixed(2);
-}
+// v1.6.15: SERVICE_TIER_MULTIPLIER + applyModelPricing 已移除。
+// 原本是「全域 model dropdown 切換時自動帶入參考價到後備路徑單價」的便利功能,
+// model dropdown 移除後不再有觸發點;且 v1.6.14 已加 per-model override 表
+// 取代「自動帶價」的 UX 功能。後備路徑單價現在純由使用者填,不自動連動 service tier。
 
 function applyTierToInputs(tier, model) {
   const rpmEl = $('rpm');
@@ -77,6 +59,15 @@ function applyTierToInputs(tier, model) {
 
 const $ = (id) => document.getElementById(id);
 
+// v1.6.19: 解析 input value——空字串/非法字元走 default,合法有限數字(含 0、負數)保留。
+// 取代 `Number(v) || default`(會把 0 當 falsy 改回預設)的舊寫法。
+function parseUserNum(rawValue, defaultValue) {
+  const v = String(rawValue ?? '').trim();
+  if (v === '') return defaultValue;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : defaultValue;
+}
+
 async function load() {
   const saved = await browser.storage.sync.get(null);
   // v0.62 起：apiKey 改存 browser.storage.local，不跟 Google 帳號同步
@@ -89,24 +80,30 @@ async function load() {
     apiKey: localApiKey,
   };
   $('apiKey').value = s.apiKey;
-  const modelSelect = $('model');
-  const savedModel = s.geminiConfig.model;
-  const hasOption = [...modelSelect.options].some((o) => o.value === savedModel);
-  if (hasOption) {
-    modelSelect.value = savedModel;
-  } else {
-    modelSelect.value = '__custom__';
-    $('custom-model-input').value = savedModel;
-  }
-  toggleCustomModelInput();
+  // v1.6.15: 全域 #model dropdown 已移除,不再從 storage 載入到 UI。
+  // settings.geminiConfig.model 仍保留 storage 結構（避免 migration）但 UI 不顯示。
   $('serviceTier').value = s.geminiConfig.serviceTier;
   $('temperature').value = s.geminiConfig.temperature;
   $('topP').value = s.geminiConfig.topP;
   $('topK').value = s.geminiConfig.topK;
   $('maxOutputTokens').value = s.geminiConfig.maxOutputTokens;
   $('systemInstruction').value = s.geminiConfig.systemInstruction;
-  $('inputPerMTok').value = s.pricing.inputPerMTok;
-  $('outputPerMTok').value = s.pricing.outputPerMTok;
+  // v1.6.16: 後備路徑單價 UI 已移除(對應 input element 不存在),不再從 settings 載入到 UI。
+  // settings.pricing 仍保留 storage 結構作 belt-and-suspenders(background.js:610 fallback 路徑保留)。
+  // v1.6.14: per-model 計價覆蓋
+  const overrides = s.modelPricingOverrides || {};
+  const fillOverride = (id, model, key) => {
+    const el = $(id);
+    if (!el) return;
+    const v = overrides[model]?.[key];
+    el.value = (Number.isFinite(Number(v)) ? Number(v) : '');
+  };
+  fillOverride('override-lite-input',  'gemini-3.1-flash-lite-preview', 'inputPerMTok');
+  fillOverride('override-lite-output', 'gemini-3.1-flash-lite-preview', 'outputPerMTok');
+  fillOverride('override-flash-input', 'gemini-3-flash-preview', 'inputPerMTok');
+  fillOverride('override-flash-output','gemini-3-flash-preview', 'outputPerMTok');
+  fillOverride('override-pro-input',   'gemini-3.1-pro-preview', 'inputPerMTok');
+  fillOverride('override-pro-output',  'gemini-3.1-pro-preview', 'outputPerMTok');
   $('whitelist').value = (s.domainRules.whitelist || []).join('\n');
   $('debugLog').checked = s.debugLog;
 
@@ -117,14 +114,16 @@ async function load() {
   if (s.rpmOverride) $('rpm').value = s.rpmOverride;
   if (s.tpmOverride) $('tpm').value = s.tpmOverride;
   if (s.rpdOverride) $('rpd').value = s.rpdOverride;
-  const marginPct = Math.round((s.safetyMargin || 0.1) * 100);
+  // v1.6.19: 統一用 ?? 不用 || ——使用者輸入 0(safety margin / batch size)是合法
+  // 設定意圖,|| 會把 0 當 falsy 默默改回預設值,造成 UI 「我設了 0 卻看到 10%」。
+  const marginPct = Math.round((s.safetyMargin ?? 0.1) * 100);
   $('safetyMargin').value = marginPct;
   $('safetyMarginLabel').textContent = marginPct;
-  $('maxConcurrentBatches').value = s.maxConcurrentBatches || 10;
+  $('maxConcurrentBatches').value = s.maxConcurrentBatches ?? 10;
   $('maxUnitsPerBatch').value = s.maxUnitsPerBatch ?? 20;
   $('maxCharsPerBatch').value = s.maxCharsPerBatch ?? 3500;
   $('maxTranslateUnits').value = s.maxTranslateUnits ?? 1000;
-  $('maxRetries').value = s.maxRetries || 3;
+  $('maxRetries').value = s.maxRetries ?? 3;
 
   // v0.69: 術語表一致化設定
   const gl = { ...DEFAULTS.glossary, ...(s.glossary || {}) };
@@ -177,6 +176,11 @@ async function load() {
   $('cp-temperature').value = (typeof cp.temperature === 'number') ? cp.temperature : 0.7;
   $('cp-inputPerMTok').value = cp.inputPerMTok != null ? cp.inputPerMTok : '';
   $('cp-outputPerMTok').value = cp.outputPerMTok != null ? cp.outputPerMTok : '';
+  // v1.6.18: thinking 控制
+  const validLevels = ['auto', 'off', 'low', 'medium', 'high'];
+  const tl = validLevels.includes(cp.thinkingLevel) ? cp.thinkingLevel : 'auto';
+  if ($('cp-thinking-level')) $('cp-thinking-level').value = tl;
+  if ($('cp-extra-body-json')) $('cp-extra-body-json').value = (typeof cp.extraBodyJson === 'string') ? cp.extraBodyJson : '';
   // 從 storage.local 讀 customProviderApiKey
   const { customProviderApiKey = '' } = await browser.storage.local.get('customProviderApiKey');
   $('cp-apiKey').value = customProviderApiKey;
@@ -187,6 +191,9 @@ async function load() {
   const ytEngineEl = $('ytEngine');
   if (ytEngineEl) ytEngineEl.value = yt.engine || 'gemini';
   $('ytAutoTranslate').checked       = yt.autoTranslate       === true;
+  // v1.6.23: ASR 分句改單一 toggle——開啟=progressive(混合模式)、關閉=heuristic(預設分句)。
+  // 舊 'llm' 值視為 progressive(行為相近,LLM 結果仍會顯示;只是改成漸進方式)。
+  $('ytAsrProgressive').checked = yt.asrMode !== 'heuristic';
   // v1.5.8: 字幕是否套用固定術語表 / 黑名單
   $('ytApplyFixedGlossary').checked  = yt.applyFixedGlossary  === true;
   $('ytApplyForbiddenTerms').checked = yt.applyForbiddenTerms === true;
@@ -230,17 +237,32 @@ async function load() {
   refreshPresetKeyBindings();
 
   // v1.6.6: 工具列「翻譯本頁」按鈕的 preset slot dropdown
-  // 用 preset.label 動態填 option 內容（讓使用者看到「Flash Lite / Flash / Google MT」這類標籤而非「預設 1/2/3」）
+  // v1.6.14: slot 2 顯示「主要預設」、slot 1/3 顯示「預設 2/3」(順延編號:原預設 1 → 預設 2,原預設 2 → 主要預設,原預設 3 維持)
+  const slotTitle = (slot) => slot === 2 ? '主要預設' : `預設 ${slot === 1 ? 2 : 3}`;
   const popupSlotSel = $('popup-button-slot');
   if (popupSlotSel) {
     for (const slot of [1, 2, 3]) {
       const p = presets.find(x => x.slot === slot) || DEFAULTS.translatePresets.find(x => x.slot === slot);
-      const label = (p.label && p.label.trim()) || `預設 ${slot}`;
+      const label = (p.label && p.label.trim()) || slotTitle(slot);
       const opt = popupSlotSel.querySelector(`option[value="${slot}"]`);
-      if (opt) opt.textContent = `預設 ${slot}：${label}`;
+      if (opt) opt.textContent = `${slotTitle(slot)}：${label}`;
     }
     const slotVal = Number(s.popupButtonSlot);
     popupSlotSel.value = ([1, 2, 3].includes(slotVal) ? slotVal : 2).toString();
+  }
+
+  // v1.6.13: 自動翻譯網站使用的 preset slot
+  const autoSlotSel = $('auto-translate-slot');
+  if (autoSlotSel) {
+    for (const p of presets) {
+      const slot = Number(p.slot);
+      if (!slot) continue;
+      const label = (p.label && p.label.trim()) || slotTitle(slot);
+      const opt = autoSlotSel.querySelector(`option[value="${slot}"]`);
+      if (opt) opt.textContent = `${slotTitle(slot)}：${label}`;
+    }
+    const autoSlotVal = Number(s.autoTranslateSlot);
+    autoSlotSel.value = ([1, 2, 3].includes(autoSlotVal) ? autoSlotVal : 2).toString();
   }
 
   // v1.5.7: cache presets 與 customProvider 給用量紀錄「模型」欄的 modelToLabel() 用
@@ -348,7 +370,9 @@ function updateYtPromptCostHint() {
   const ytModel = $('ytModel').value;
   const ytInput = parseFloat($('ytInputPerMTok').value);
   const mainModel = getSelectedModel();
-  const mainInput = parseFloat($('inputPerMTok').value);
+  // v1.6.16: 後備路徑單價 UI 已移除;mainInput fallback 改用主要預設(slot 2)的內建表 pricing。
+  // 這個 hint 是設定頁字幕 prompt 開銷估算用,翻譯實際計費走獨立路徑(yt.pricing / customProvider / preset modelOverride),不受影響。
+  const mainInput = MODEL_PRICING[mainModel]?.input ?? 0;
 
   if (engine === 'openai-compat') {
     // 自訂模型字幕路徑用 customProvider 那組
@@ -425,9 +449,14 @@ async function save() {
   // v0.62 起：apiKey 單獨寫到 browser.storage.local，不進 sync
   const apiKeyValue = $('apiKey').value.trim();
   await browser.storage.local.set({ apiKey: apiKeyValue });
+  // v1.6.15: 讀回現存的 geminiConfig.model 不從 UI 取(全域 dropdown 已移除)。
+  // 保留 storage 欄位避免 migration,且 testGeminiKey 已改走「主要預設」的 model。
+  // v1.6.16: 同樣讀回 settings.pricing(後備路徑單價 UI 也移除了)。
+  const existing = await browser.storage.sync.get(['geminiConfig', 'pricing']);
+  const existingModel = existing.geminiConfig?.model || DEFAULTS.geminiConfig.model;
   const settings = {
     geminiConfig: {
-      model: getSelectedModel(),
+      model: existingModel,
       serviceTier: $('serviceTier').value,
       temperature: Number($('temperature').value),
       topP: Number($('topP').value),
@@ -435,21 +464,21 @@ async function save() {
       maxOutputTokens: Number($('maxOutputTokens').value),
       systemInstruction: $('systemInstruction').value,
     },
-    pricing: {
-      inputPerMTok: Number($('inputPerMTok').value) || 0,
-      outputPerMTok: Number($('outputPerMTok').value) || 0,
-    },
+    // v1.6.16: 後備路徑單價 UI 已移除,從 storage 拉現存值寫回(沿用 v1.6.15 對 geminiConfig.model 的同 pattern)
+    pricing: existing.pricing || DEFAULTS.pricing,
     domainRules: {
       whitelist: $('whitelist').value.split('\n').map(s => s.trim()).filter(Boolean),
     },
     debugLog: $('debugLog').checked,
     tier: $('tier').value,
+    // v1.6.19: 改用 parseUserNum——空字串/非法字元走 default,合法數字(含 0)保留。
+    // 沿用 `|| default` 會把使用者明確打的 0 一律當 falsy 改回預設,造成 UI 不一致。
     safetyMargin: Number($('safetyMargin').value) / 100,
-    maxRetries: Number($('maxRetries').value) || 3,
-    maxConcurrentBatches: Number($('maxConcurrentBatches').value) || 10,
-    maxUnitsPerBatch: Number($('maxUnitsPerBatch').value) || 20,
-    maxCharsPerBatch: Number($('maxCharsPerBatch').value) || 3500,
-    maxTranslateUnits: Number($('maxTranslateUnits').value) ?? 1000,
+    maxRetries: parseUserNum($('maxRetries').value, 3),
+    maxConcurrentBatches: parseUserNum($('maxConcurrentBatches').value, 10),
+    maxUnitsPerBatch: parseUserNum($('maxUnitsPerBatch').value, 20),
+    maxCharsPerBatch: parseUserNum($('maxCharsPerBatch').value, 3500),
+    maxTranslateUnits: parseUserNum($('maxTranslateUnits').value, 1000),
     // 只有 custom tier 才寫入 override(其他 tier 的數字從對照表讀,不存)
     rpmOverride: $('tier').value === 'custom' ? (Number($('rpm').value) || null) : null,
     tpmOverride: $('tier').value === 'custom' ? (Number($('tpm').value) || null) : null,
@@ -479,6 +508,8 @@ async function save() {
     ytSubtitle: {
       engine: ($('ytEngine')?.value || 'gemini'),  // v1.4.0
       autoTranslate:      $('ytAutoTranslate').checked,
+      // v1.6.23: ASR 分句單一 toggle——checked=progressive(混合)、unchecked=heuristic
+      asrMode: $('ytAsrProgressive').checked ? 'progressive' : 'heuristic',
       // v1.5.8: 字幕是否套用固定術語表 / 黑名單
       applyFixedGlossary:  $('ytApplyFixedGlossary').checked,
       applyForbiddenTerms: $('ytApplyForbiddenTerms').checked,
@@ -517,6 +548,33 @@ async function save() {
       const v = Number($('popup-button-slot')?.value);
       return [1, 2, 3].includes(v) ? v : 2;
     })(),
+    // v1.6.13: 自動翻譯網站(白名單)觸發時走的 preset slot
+    autoTranslateSlot: (() => {
+      const v = Number($('auto-translate-slot')?.value);
+      return [1, 2, 3].includes(v) ? v : 2;
+    })(),
+    // v1.6.14: per-model 計價覆蓋(Google 改價時使用者自填)。
+    // 兩欄都是合法數字才寫入 entry,任一欄空白整個 model 不存(走內建表)。
+    modelPricingOverrides: (() => {
+      const collect = (model, inputId, outputId) => {
+        const i = $(inputId)?.value?.trim();
+        const o = $(outputId)?.value?.trim();
+        if (i === '' || o === '') return null;
+        const ni = Number(i), no = Number(o);
+        if (!Number.isFinite(ni) || !Number.isFinite(no) || ni < 0 || no < 0) return null;
+        return { model, inputPerMTok: ni, outputPerMTok: no };
+      };
+      const rows = [
+        collect('gemini-3.1-flash-lite-preview', 'override-lite-input',  'override-lite-output'),
+        collect('gemini-3-flash-preview',         'override-flash-input', 'override-flash-output'),
+        collect('gemini-3.1-pro-preview',         'override-pro-input',   'override-pro-output'),
+      ].filter(Boolean);
+      const out = {};
+      for (const r of rows) {
+        out[r.model] = { inputPerMTok: r.inputPerMTok, outputPerMTok: r.outputPerMTok };
+      }
+      return out;
+    })(),
     // v1.0.29: 固定術語表（save 前先同步 UI → 記憶體）
     fixedGlossary: (() => {
       // 同步全域表格的最新 UI 值
@@ -540,6 +598,7 @@ async function save() {
       return forbiddenTerms.filter(t => t.forbidden || t.replacement);
     })(),
     // v1.5.7: 自訂 OpenAI-compatible Provider
+    // v1.6.18: 加入 thinkingLevel + extraBodyJson(各家 thinking schema 統一抽象)
     customProvider: {
       baseUrl: ($('cp-baseUrl').value || '').trim(),
       model: ($('cp-model').value || '').trim(),
@@ -547,6 +606,11 @@ async function save() {
       temperature: Number($('cp-temperature').value) || 0.7,
       inputPerMTok: Number($('cp-inputPerMTok').value) || 0,
       outputPerMTok: Number($('cp-outputPerMTok').value) || 0,
+      thinkingLevel: (() => {
+        const v = $('cp-thinking-level')?.value;
+        return ['auto', 'off', 'low', 'medium', 'high'].includes(v) ? v : 'auto';
+      })(),
+      extraBodyJson: ($('cp-extra-body-json')?.value || '').trim(),
     },
   };
   // v1.5.7: customProvider.apiKey 走 storage.local（與主 apiKey 同樣設計），先抽出再寫 sync
@@ -615,17 +679,10 @@ $('cp-reset-prompt')?.addEventListener('click', () => {
 // 不直接寫 storage（要使用者按「儲存設定」才生效），避免誤觸毀掉自訂設定無法回復。
 // 不影響其他分頁（術語表 / 禁用詞 / 自訂模型 / YouTube 字幕）；要全部清空仍走「一般設定 → 回復預設設定」。
 $('gemini-reset-all')?.addEventListener('click', () => {
-  if (!confirm('確定要把 Gemini 分頁所有參數重設為預設值嗎？\n\n影響欄位：模型、Service Tier、計價、Tier/RPM/TPM/RPD、安全邊際、重試次數、Temperature、Top P、Top K、Max Output Tokens、翻譯 Prompt、並發批次、每批段數/字元/段落上限。\n\n按下後仍需點「儲存設定」才會生效。')) return;
+  if (!confirm('確定要把 Gemini 分頁所有參數重設為預設值嗎？\n\n影響欄位：Service Tier、模型計價覆蓋（清空走內建表）、Tier/RPM/TPM/RPD、安全邊際、重試次數、Temperature、Top P、Top K、Max Output Tokens、翻譯 Prompt、並發批次、每批段數/字元/段落上限。\n\n按下後仍需點「儲存設定」才會生效。')) return;
   const D = DEFAULTS;
-  // 模型 + service tier
-  const modelSel = $('model');
-  if ([...modelSel.options].some(o => o.value === D.geminiConfig.model)) {
-    modelSel.value = D.geminiConfig.model;
-  } else {
-    modelSel.value = '__custom__';
-    $('custom-model-input').value = D.geminiConfig.model;
-  }
-  toggleCustomModelInput();
+  // v1.6.15: 全域 #model dropdown 已移除,不再 reset 模型 UI;只 reset service tier。
+  // settings.geminiConfig.model 由「儲存設定」按鈕從 storage 讀回沿用。
   $('serviceTier').value = D.geminiConfig.serviceTier;
   // LLM 參數
   $('temperature').value     = D.geminiConfig.temperature;
@@ -634,12 +691,20 @@ $('gemini-reset-all')?.addEventListener('click', () => {
   $('maxOutputTokens').value = D.geminiConfig.maxOutputTokens;
   $('systemInstruction').value = D.geminiConfig.systemInstruction;
   // 計價
-  $('inputPerMTok').value  = D.pricing.inputPerMTok;
-  $('outputPerMTok').value = D.pricing.outputPerMTok;
+  // v1.6.16: 後備路徑單價 UI 已移除,reset 不再動 settings.pricing 欄位。
+  // v1.6.14: per-model override 欄位 reset 為空(預設 modelPricingOverrides:{} 對應 UI 全空 = 走內建表)。
+  for (const id of [
+    'override-lite-input',  'override-lite-output',
+    'override-flash-input', 'override-flash-output',
+    'override-pro-input',   'override-pro-output',
+  ]) {
+    const el = $(id);
+    if (el) el.value = '';
+  }
   // 配額（先填 tier 觸發 RPM/TPM/RPD readonly 帶值，再清掉 override）
   $('tier').value = D.tier;
   applyTierToInputs(D.tier, D.geminiConfig.model);
-  $('safetyMargin').value = Math.round((D.safetyMargin || 0.1) * 100);
+  $('safetyMargin').value = Math.round((D.safetyMargin ?? 0.1) * 100);
   $('safetyMarginLabel').textContent = $('safetyMargin').value;
   $('maxRetries').value = D.maxRetries;
   // 效能
@@ -663,7 +728,10 @@ $('ytEngine')?.addEventListener('change', () => {
   updateYtPromptCostHint();
 });
 // v1.5.8: 字幕模型 / 計價變動時重算 cost hint
-for (const id of ['ytModel', 'ytInputPerMTok', 'cp-model', 'cp-inputPerMTok', 'inputPerMTok', 'model']) {
+// v1.6.15: 移除 'model'(全域 dropdown 已移除)。preset-model-2 切換不影響字幕成本估算
+// 因為字幕用獨立的 ytSubtitle.model;字幕 prompt token 成本估算只看字幕端設定。
+// v1.6.16: 移除 'inputPerMTok'(後備路徑單價 UI 已移除)
+for (const id of ['ytModel', 'ytInputPerMTok', 'cp-model', 'cp-inputPerMTok']) {
   $(id)?.addEventListener('change', updateYtPromptCostHint);
   $(id)?.addEventListener('input', updateYtPromptCostHint);
 }
@@ -782,20 +850,12 @@ $('test-api-key').addEventListener('click', async () => {
   });
 });
 
-// Tier 或 Model 變更 → 自動更新 RPM/TPM/RPD 顯示
+// Tier 變更 → 自動更新 RPM/TPM/RPD 顯示
+// v1.6.15: 全域 model dropdown 已移除,Service Tier 已搬到 LLM 參數微調 section。
+// applyModelPricing(model) 在這裡也失去意義(model 不再從 UI 變,計價走 v1.6.14 per-model
+// override 表;Service Tier 影響的是內建表 multiplier,但「後備路徑單價」不再隨 tier 變)。
 $('tier').addEventListener('change', () => {
   applyTierToInputs($('tier').value, getSelectedModel());
-});
-// v0.64：Model 變更 → 更新 rate limit + 自動帶入參考價 + 切換自行輸入欄位
-$('model').addEventListener('change', () => {
-  toggleCustomModelInput();
-  const model = getSelectedModel();
-  applyTierToInputs($('tier').value, model);
-  applyModelPricing(model);
-});
-// Service Tier 變更 → 重新計算模型計價（Flex 半價、Priority 兩倍）
-$('serviceTier').addEventListener('change', () => {
-  applyModelPricing(getSelectedModel());
 });
 $('safetyMargin').addEventListener('input', () => {
   $('safetyMarginLabel').textContent = $('safetyMargin').value;
@@ -864,6 +924,8 @@ function sanitizeImport(raw) {
     rpdOverride:         { type: 'number', min: 1, nullable: true },
     toastAutoHide:       { type: 'boolean' },
     popupButtonSlot:     { type: 'number', min: 1, max: 3, int: true }, // v1.6.6
+    autoTranslateSlot:   { type: 'number', min: 1, max: 3, int: true }, // v1.6.13
+    modelPricingOverrides: { type: 'object' }, // v1.6.14
     showProgressToast:   { type: 'boolean' }, // v1.6.8
   };
 
@@ -1656,6 +1718,14 @@ document.querySelectorAll('.gran-btn').forEach(btn => {
     currentGranularity = btn.dataset.gran;
     loadUsageData();
   });
+});
+
+// v1.6.11: 手動重新載入用量紀錄（不需關閉設定頁）
+// 使用者回報：translatePage 寫入新紀錄後,設定頁停留在用量頁也不會自動更新,
+// Cmd+R refresh 也會回到預設分頁。loadUsageData() 已能保留當前的篩選狀態
+// （日期範圍 / 搜尋 / 模型 filter / 粒度）只重抓底層資料,直接呼叫即可。
+$('usage-reload')?.addEventListener('click', () => {
+  loadUsageData();
 });
 
 // 匯出 CSV
