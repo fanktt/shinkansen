@@ -150,6 +150,25 @@
         0%, 100% { opacity: 1; }
         50%      { opacity: .4; }
       }
+      /* v1.8.7 / v1.8.8: action button(節省模式翻完後「翻譯剩餘段落」按鈕用)
+         配色對齊 toast 白底深字風格 + 既有進度條品牌藍 #0071e3 */
+      .toast-action {
+        display: inline-block;
+        margin-top: 8px;
+        background: #0071e3;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        padding: 6px 12px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        font-family: inherit;
+        transition: background 0.15s ease;
+      }
+      .toast-action:hover { background: #0058b8; }
+      .toast-action:active { background: #004a99; }
+      .toast-action[hidden] { display: none; }
     </style>
     <div class="toast" id="toast">
       <div class="row">
@@ -168,6 +187,7 @@
         <span class="wn-msg" id="wn-msg"></span>
         <button class="wn-dismiss" id="wn-dismiss" type="button" title="今天不再提示">×</button>
       </div>
+      <button class="toast-action" id="toast-action" type="button" hidden></button>
       <div class="bar"><div class="bar-fill" id="fill"></div></div>
     </div>
   `;
@@ -220,6 +240,15 @@
   const toastEl = shadow.getElementById('toast');
   const toastMsgEl = shadow.getElementById('msg');
   const toastDetailEl = shadow.getElementById('detail');
+  // v1.8.7: action button(opts.action = { label, onClick })
+  const toastActionEl = shadow.getElementById('toast-action');
+  let toastActionHandler = null;
+  toastActionEl.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (typeof toastActionHandler === 'function') {
+      try { toastActionHandler(); } catch (err) { /* swallow */ }
+    }
+  });
   // v1.6.1: 更新提示元素 — showToast 用 opts.updateNotice 觸發；點擊「下載」連結
   // 與「×」都會送 UPDATE_NOTICE_DISMISSED 訊息標記今天已顯示，達成每日節流。
   const updateNoticeEl = shadow.getElementById('update-notice');
@@ -309,6 +338,17 @@
       toastDetailEl.hidden = true;
     }
 
+    // v1.8.7: action button — opts.action = { label, onClick }
+    if (opts.action && opts.action.label) {
+      toastActionEl.textContent = opts.action.label;
+      toastActionEl.hidden = false;
+      toastActionHandler = opts.action.onClick;
+    } else {
+      toastActionEl.hidden = true;
+      toastActionEl.textContent = '';
+      toastActionHandler = null;
+    }
+
     // v1.6.1: 更新提示——僅在 success toast 且呼叫端有判斷今日尚未顯示時傳入
     if (opts.updateNotice && opts.updateNotice.version && opts.updateNotice.releaseUrl) {
       updateNoticeLink.textContent = `v${opts.updateNotice.version} 可下載 — 點此前往`;
@@ -357,7 +397,8 @@
       }, opts.autoHideMs);
     }
 
-    if (kind === 'success' && !opts.autoHideMs) {
+    // v1.8.7: 有 action button 時不 auto-hide,讓使用者有時間決定點按或關閉
+    if (kind === 'success' && !opts.autoHideMs && !opts.action) {
       if (toastAutoHide) {
         toastHideHandle = setTimeout(() => {
           toastHideHandle = null;
@@ -379,6 +420,10 @@
   SK.hideToast = function hideToast() {
     toastEl.className = 'toast pos-' + currentToastPosition;
     toastDetailEl.hidden = true;
+    // v1.8.7: 清 action button
+    toastActionEl.hidden = true;
+    toastActionEl.textContent = '';
+    toastActionHandler = null;
     clearInterval(toastTickHandle);
     toastTickHandle = null;
     if (toastHideHandle) {

@@ -17,26 +17,68 @@
 
 ## 條目
 
-### v1.6.19 — `hydrateStickyTabs` 並行 race(promise lock 修法)
-- **症狀**:SW 喚醒後 `_stickyStorage.get` 完成前若連開多個新 tab,後續 onCreated listener 進來時 `_stickyHydrated=true` 已 set 直接 return,但 stickyTabs Map 還空 → `stickyTabs.get(openerId)` 回 undefined → 沒繼承 sticky slot
-- **修在**:`shinkansen/background.js:200-235`(`_stickyHydratingPromise` 取代 boolean flag,所有 caller `await` 同一 in-flight promise)
-- **為什麼還不能寫測試**:Playwright 的 `context.newPage` 與 `window.open` 的時序受 Chromium 內部排程影響,SW wake 與 storage.session.get 完成的時間差難以可控地壓在「第二次 onCreated 進來時 await 還沒回」這個窄窗;jest-unit 用 jsdom mock 也需大幅 rewrite background.js 的 module pattern。先把實際修法 commit,觸發機率本身極低(<50ms 視窗 + 連開多 tab),靠真實使用發現幾乎不可能。
-- **建議 spec 位置**:`test/jest-unit/sticky-hydrate-race.test.cjs`
-- **建議 fixture 結構**(已知觸發條件):mock `chrome.storage.session.get` 回 50ms delay 的 Promise,接著兩次 `tabs.onCreated.dispatch` 各自帶 openerTabId,驗證兩次 `stickyTabs.get(openerId)` 都拿到正確 slot。
+### v1.8.15 — Drive 影片 ASR 字幕翻譯整段 e2e spec
+- **症狀**:N/A,新功能整段 pipeline 沒 regression spec 涵蓋
+- **修在**:`shinkansen/content-drive.js`(新檔,top frame entry)+ `shinkansen/content-drive-iframe.js`(新檔,iframe entry)+ `shinkansen/background.js`(新 handlers DRIVE_TIMEDTEXT_URL / TRANSLATE_DRIVE_ASR_SUBTITLE_BATCH / TRANSLATE_DRIVE_BATCH_GOOGLE)+ `shinkansen/content-youtube.js`(SK.ASR helper export + bilingualMode replaceSegmentEl gate)+ `shinkansen/popup/*`(Drive toggle + bilingual toggle)
+- **為什麼還沒寫 spec**:整段 pipeline 涉及多個 cross-origin 元件(youtube.googleapis.com/embed iframe + drive.google.com timedtext + YouTube IFrame Player API postMessage),fixture 要模擬 cross-origin embed 不直觀;單元層的 SK.ASR helper / popup toggle 行為已被 YouTube ASR 13 + non-ASR 8 既有 spec 涵蓋(因為共用同一份 helper / 同一個 storage key);Drive 專屬路徑(content-drive.js / content-drive-iframe.js)的 e2e 留下次 dedicated 一輪寫
+- **建議 spec 位置**:`test/regression/drive-asr-pipeline.spec.js`(整條 timedtext URL → background fetch → relay → parseJson3 → throttled batch → entries push → overlay render)+ `test/regression/drive-bilingual-toggle.spec.js`(toggle 切換 storage onChanged → loadModule/unloadModule postMessage)+ `test/regression/youtube-bilingual-segment-write.spec.js`(replaceSegmentEl 雙語 + 非 ASR 寫「英文+譯文兩行」innerHTML)
 
-### v1.6.19 — options.js `parseUserNum` 修「`||` 把 0 當 falsy」
-- **症狀**:使用者在設定頁輸入 `0`(safetyMargin / maxRetries / maxConcurrentBatches / maxUnitsPerBatch / maxCharsPerBatch / maxTranslateUnits)→ save 端 `Number(v) || default` 把 0 視為 falsy 回退預設值,使用者下次打開設定頁看到自己輸入的 0 變回預設,UI 體感 bug
-- **修在**:`shinkansen/options/options.js:60-67`(新增 `parseUserNum` helper),`shinkansen/options/options.js:108-119, 463-474, 689`(load/save/reset 三處用 `??` 取代 `||`)
-- **為什麼還不能寫測試**:`parseUserNum` 是 options.js 內部 helper,沒 export;options.js 走 ES module + DOM 操作,直接從 jest 載入需大量 stub(document、chrome.storage 等)。小工具函式 6 行,最壞情況也是「使用者輸入 0 看到預設」,不是資料破壞,測試效益低於投入成本。
-- **建議 spec 位置**:`test/jest-unit/options-parse-user-num.test.cjs`(若要鎖,把 `parseUserNum` 抽到 `lib/format.js` 或新 `lib/parse-input.js` export 後再寫測)
-- **建議 fixture 結構**:`parseUserNum('0', 20) === 0`、`parseUserNum('', 20) === 20`、`parseUserNum('abc', 20) === 20`、`parseUserNum('5.5', 20) === 5.5`
+### v1.8.15 — Drive 影片自動開 CC 不 work(留 v1.8.16 修)
+- **症狀**:Drive 影片載入後字幕沒自動載入,使用者必須手動按 player CC 按鈕一次才會觸發 timedtext fetch,字幕翻譯 pipeline 才啟動
+- **修在 commit 5c.7 嘗試但失敗**(commit 5c.8 已 revert):onReady postMessage `setOption('captions', 'track', {languageCode:'en'})` 對 cross-origin embed timing 不可靠
+- **建議重做方向**:listen onApiChange event(captions module ready 時 fire)再送 setOption;或 multiple setTimeout 嘗試 + listen 是否 fire timedtext request 確認生效
 
-### v1.6.19 — content.js `sendMessageWithTimeout` timer leak 修法
-- **症狀**:`Promise.race([sendMessage, setTimeout reject])` 結構在 sendMessage 先 settle 時不 clearTimeout,90s 後 timer 仍 fire(reject 已 settled 的 promise 被忽略,但 Error 物件 + timer 占住 90s GC)。長頁面 50+ batch 累積。
-- **修在**:`shinkansen/content.js:130-158`(`sendMessageWithTimeout` helper 用 `.finally(() => clearTimeout(timer))`),兩處 `Promise.race` call site 改用 helper(content.js 的 Gemini batch 與 Google Translate batch 路徑)
-- **為什麼還不能寫測試**:GC / timer 殘留難以從 page-level Playwright 觀察;若改寫成 stub `setTimeout`/`clearTimeout` 計數,等於針對實作細節寫測試,不是行為驗證。實際影響極低(微 GC 壓力,沒有功能差異),修法也夠小(包成 helper),不值得專屬測試。
-- **建議 spec 位置**:不寫(走「dim 影響無自動化價值」豁免)
-- **建議 fixture 結構**:N/A
+### v1.8.15 — Drive overlay 控制列顯示時不動態上抬(留 v1.8.16 修)
+- **症狀**:player 控制列顯示時,iframe 內原生英文 CC 從 bottom 30px 上抬到 ~82px,但我們的 Drive overlay 維持固定 bottom 22%,可能跟原生 CC 重疊或被進度條疊到
+- **修在 commit 5c.7 嘗試但失敗**(commit 5c.8 已 revert):iframe.mouseenter/mouseleave 對 cross-origin iframe 不可靠 fire,當 chrome show/hide 信號失準
+- **建議重做方向**:用 IFrame Player API postMessage `addEventListener('onPlaybackQualityChange')` 之類間接信號;或 listen YT player 的 onStateChange + 外部 hover state 組合判斷;或乾脆放棄動態上抬,固定 bottom 22% 接受邊界 case 略有重疊
+
+
+
+### v1.8.14 — streaming 期間 SW keep-alive
+- **症狀**:MV3 SW 預設 5 分鐘 idle 收回。長頁翻譯中切去其他 tab 5 分鐘,inFlightStreams Map(module-level state)消失 → 取消按鈕無響應 + abort 訊號到不了 fetch
+- **修在**:`shinkansen/background.js` 加 `_streamKeepAliveTimer`,在 inFlightStreams 第一個 stream start 時 setInterval 每 20 秒呼叫 chrome.runtime.getPlatformInfo(極輕量)重置 SW idle timer;最後一個 stream end 時 clearInterval
+- **為什麼還沒寫 spec**:SW idle timeout 是 Chrome 內部行為,Playwright 環境的 SW 生命週期跟真實 Chrome 不一致(測試環境通常不會主動 unload),fixture 無法 deterministic 模擬「5 分鐘後 SW 被回收」這個觸發點
+- **建議 spec**:可以驗 helper 行為(start 後 setInterval 啟動、stream 都結束後 clearInterval),但測這個等同測實作細節而非行為。建議走人工驗收:在實機開長頁翻譯 → 切到別的 tab 5 分鐘 → 回來按取消應仍有反應
+
+### v1.8.14 — Content Guard 改 IntersectionObserver subset
+- **症狀**:長文(Wikipedia 千段條目)的 guard sweep 每秒對 STATE.translatedHTML 整份(N 條)做字串相等比對 + 部分 getBoundingClientRect 強制 layout,跟使用者捲動搶 main thread
+- **修在**:`shinkansen/content-spa.js` 加 `guardIntersectionObserver` + `guardVisibleSet`,在 startSpaObserver 時 observe 所有 STATE.translatedHTML / translationCache 元素;runContentGuard 改成優先走 visibleSet 子集
+- **為什麼還沒寫 spec**:IO 行為依賴 Chrome 真實 layout + viewport 變化的時序,Playwright fixture 要 deterministic 觸發 IntersectionObserver callback 不直觀;且既有 `guard-content-overwrite.spec.js` 已涵蓋 guard 核心行為,IO subset 是純性能優化(行為通則一致)
+- **建議 spec**:若要補,走真實 viewport 模擬:scrollIntoView 一個被 SPA 覆寫的元素 → 等 IO callback fire → 確認 sweep 修復該元素;捲走後該元素的修復不再被觸發
+
+### v1.8.14 — options.save() in-flight guard
+- **症狀**:save() 是 read-modify-write(sync.get → 組整桶 → sync.set)沒 lock。並發按下兩次儲存(快速連按 / 跨 Tab / 打字+按鈕同時觸發)會丟資料
+- **修在**:`shinkansen/options/options.js` save() 開頭加 `_saveInFlight` flag wrap
+- **為什麼還沒寫 spec**:save() 跟 DOM 強耦合(讀 30+ 個欄位 + storage IPC),抽成可 unit-test 的純函式 ROI 低;guard pattern 極簡(三行 try/finally),修法本身是 defensive,實務觸發條件罕見
+- **建議 spec**:若要補,可走 Playwright UI 測 — 開設定頁→改一個欄位→快速連按儲存按鈕→驗證只有一輪 storage.sync.set 被執行
+
+### v1.8.14 — options 用量搜尋 debounce + Debug fetchLogs 空 short-circuit
+- **症狀**:用量紀錄到 1-2K 筆時每打一字整表 re-render 卡;Debug 分頁 polling 即使沒新 log 也整表 re-render(空操作浪費)
+- **修在**:`shinkansen/options/options.js` `usage-search input` 加 150ms debounce + `fetchLogs` 在 `res.logs.length===0` 時 return 不 render
+- **為什麼還沒寫 spec**:debounce 是時序敏感行為,Playwright 跑 deterministic 測會抖;fetchLogs 邏輯改動很小(early return),且 options.js 不是 ES module 形式不容易單元測。修法明顯且風險極低,效益主要靠人工觀察(設定頁紀錄上千筆時搜尋體感是否流暢)
+- **建議 spec**:若未來要補,可走 Playwright UI 測 — 開設定頁→塞 1K 筆紀錄→快速打字測 input event 與 render 次數的比值
+
+### v1.8.13 — GMT 字幕 IndexedDB source 分類錯誤(非真漏帳)
+- **症狀**:用 Google MT 翻 YouTube 字幕,IndexedDB 雖然有寫紀錄(`background.js:1374` `upsertGoogleUsage`),但 source='google' 而非 source='youtube-subtitle'。使用者用量分頁看 YouTube 字幕用量時,GMT 那段不會出現在 YouTube 分類裡,被歸到「網頁翻譯」(URL 是 YouTube 影片網址)
+- **修在**:`shinkansen/content-youtube.js:1996` `_logWindowUsage` guard 把 GMT 的 `inputTokens=0` 擋掉 → `LOG_USAGE` 不送 → `upsertYouTubeUsage` 不被呼叫
+- **為什麼還沒修**:雙寫風險——若放寬 guard 讓 GMT 能進 LOG_USAGE,會跟 background 端的 upsertGoogleUsage 雙寫(同一批兩處記帳)。乾淨修法是讓 background `handleTranslateGoogle` 在 cacheSuffix='_gt_yt' 時不寫 IndexedDB,改由 content side LOG_USAGE 負責。需要雙改 + 新 spec 涵蓋整條路徑;費用幾乎 $0,實際使用者看不出差異,ROI 低先擱置
+- **建議 spec 位置**:`test/regression/youtube-gmt-usage-classification.spec.js`
+- **建議 fixture**:mock browser.runtime.sendMessage 對 TRANSLATE_SUBTITLE_BATCH_GOOGLE 回 `{ ok: true, result: ['你好'], usage: { engine: 'google', chars: 5, cacheHits: 0 } }`,呼叫 `_logWindowUsage(1, usage)`,驗證 LOG_USAGE 訊息有送出且 source='youtube-subtitle'
+
+### ~~v1.8.0 — streaming abort / mid-failure / first_chunk timeout 三個 e2e edge case~~ — 已補測試(2026-04-28)
+- abort 跨批傳播 → `test/regression/streaming-batch-0-abort.spec.js`(monkey-patch onMessage listener 收集器,先 fire FIRST_CHUNK 解放 batch 1+ 並行,maxConcurrentBatches=1 讓 abort 後 worker 下次迴圈 check signal.aborted 退出。SANITY:abortHandler 改 no-op → STREAMING_ABORT count=0 fail。)
+- mid-failure → `test/regression/streaming-batch-0-mid-failure.spec.js`(FIRST_CHUNK + 3 個 SEGMENT 後 STREAMING_ERROR,驗證 batch 0「整批 25 texts retry」+ batch 1 已並行不重送。SANITY:catch 區塊 no-op → batch 0 retry 不送、payloadSizes 變 1 fail。)
+- first_chunk 1.5s timeout → `test/regression/streaming-batch-0-first-chunk-timeout.spec.js`(TRANSLATE_BATCH_STREAM 回 started:true 但完全不 fire 任何 STREAMING_*,驗證 1.5s 後 STREAMING_ABORT 送 + fallback 走 non-streaming。SANITY:FIRST_CHUNK_TIMEOUT_MS 改 1_000_000 → 永不 timeout、abortCount=0 fail。)
+
+### ~~v1.6.19 — `hydrateStickyTabs` 並行 race~~ — 已豁免(2026-04-28)
+觸發條件「SW 喚醒後 <50ms 內連開多 tab」極端窄窗,真實使用幾乎不可能踩到;Playwright 的 `context.newPage` timing 受 Chromium 內部排程影響無法穩定壓住該 race window,jsdom mock 又得大幅 rewrite `background.js` 的 module pattern。修法本身已 commit(`_stickyHydratingPromise` 取代 boolean flag),回歸風險評估遠低於測試 rewrite 成本,走豁免不寫 spec。
+
+### ~~v1.6.19 — options.js `parseUserNum`~~ — 已補測試 → `test/unit/parse-user-num.spec.js`(v1.8.9)
+v1.8.9 把 `parseUserNum` helper 從 `options.js` 內部抽到 `lib/format.js` export,寫 10 條 Playwright unit spec 涵蓋 0 / 空字串 / null / undefined / 非法字元 / 正整數 / 小數 / 負數 / trim 空白 / Infinity / NaN 全部 case。SANITY 通過(把 body 改回 `Number(v) || default` → "0 應保留" + "Infinity/NaN 走 default" fail)。
+
+### ~~v1.6.19 — content.js `sendMessageWithTimeout` timer leak~~ — 已豁免(原 PENDING 條目就宣告)
+GC / timer 殘留難以從 page-level Playwright 觀察;stub `setTimeout`/`clearTimeout` 計數等於測實作細節而非行為。實際影響極低(微 GC 壓力沒功能差異),修法已包成 helper,測試效益低於投入成本,走「dim 影響無自動化價值」豁免。
 
 ### ~~vBulletin td.alt1 翻譯後標題 div 消失 / HR 位置顛倒~~ — 已修復（v1.4.14）→ `test/regression/inject-vbulletin-title-div.spec.js`
 （Cowork 端 Chrome MCP 實地診斷：根因不在 detection，而在 `content-inject.js` `injectIntoTarget`——TD 含 img 觸發 `containsMedia(TD)=true` 走 media-preserving path，把 fragment 塞進最長文字節點所在的 postbitcontrol2，原 smallfont/HR 殘留於其上方。修法：target 有 CONTAINER_TAGS 直屬子元素時改走 clean-slate（`containsMedia && !hasContainerChild` 才走 media path）。SANITY 通過。這是 v1.4.14 起「UI bug 必須 Cowork 實地診斷」新流程的首發；對比前一版被 revert 的 v1.4.14（Claude Code 純推理自以為修好但真實頁面沒用），證明實地驗證規則的必要性。）

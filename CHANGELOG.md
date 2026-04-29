@@ -11,6 +11,7 @@
 
 ### 翻譯引擎與模型
 
+- **v1.8.0** — **極速秒翻**:文章翻譯 batch 0 改走 Gemini streaming(SSE),按下翻譯 1 秒就看到頁面開始變中文(首字延遲 2.5-4.4 秒 → 1.0-1.2 秒);batch 0 size 從 10 unit 擴大到 25 unit,涵蓋整段內文前 25 段。僅限 Gemini 文章翻譯 batch 0,字幕 / 術語表 / Google MT / 自訂模型不動
 - **v1.6.19** — Code review 後修 5 條穩健性 bug:YouTube 字幕並行批次某批失敗不再拖累其他批字幕、跨 tab sticky 翻譯在 SW 喚醒當下連開多 tab 不再漏繼承、設定頁可正確輸入 0(不會被靜默改回預設)、fragment 注入遇到 DOM 重排不再 crash、batch timer 不再洩漏
 - **v1.6.18** — 自訂模型分頁加「思考強度」(自動 / 關閉 / 低 / 中 / 高)統一控制,涵蓋 OpenRouter / DeepSeek / Claude / OpenAI o-series / Grok / Qwen 6 家 thinking API 差異;另加「進階 JSON」逃生口給 power user 透傳 provider 專屬參數
 - **v1.6.12** — 修 Pro 模型(`gemini-3-pro-preview` / `gemini-2.5-pro` 等)翻譯失敗 bug,並升級到 Gemini 3 推薦的 `thinkingLevel` API
@@ -29,10 +30,16 @@
 
 ### 翻譯品質與術語管理
 
+- **v1.8.7** — 「**翻譯剩餘段落**」按鈕:partialMode 翻完開頭後 toast 顯示「已翻譯前 N 段(共 M 段)」+ 常駐按鈕,點按走完整翻譯,前段從本地快取 fast path 命中(0 token / 9ms),只後段打 API。「只翻文章開頭」UI 從「效能」section 獨立成「**節省模式**」section,搬到「配額」之前
+- **v1.8.3** — 新增「**只翻文章開頭(節省費用)**」選項。翻譯只跑前 N 段(範圍 5-50,預設 25),大幅減少 token 用量;適合先預覽再決定要不要看完整文章。預設關閉
+- **v1.7.1** — **翻譯優先級排序**:長網頁翻譯時最先看到的譯文從「導覽列 / cookie 同意書 / TOC」變成「文章標題 + 第一段內文」(`prioritizeUnits` 把 main / article 內段落排到 batch 0 + batch 0 序列化先跑)
 - **v1.5.6** — 新增中國用語黑名單分頁（預設 25 條禁用詞，可編輯）
 
 ### YouTube 字幕翻譯
 
+- **v1.8.9** — YouTube **人工字幕**(非 ASR)batch 0 也走 streaming(SSE),首字延遲從整批 resolve 砍成 SSE 首段;非 ASR 字幕長譯文也比照 ASR 走 `_wrapTargetText` 切點 + `<br>` 注入,中文長句不再沖出 video 寬
+- **v1.8.2** — ASR 字幕 overlay 黑底 padding 縮緊,左右各省 7px,視覺比例對齊原生 YouTube 字幕(原本黑底比原生大很多)
+- **v1.7.0** — YouTube **自動產生字幕**(ASR)生產級體驗:**AI 智慧分句**(整批送 Gemini 依語意重組,中文字幕從「破碎的詞」變「完整句子」)、**混合模式預設**(預設分句先秒出、AI 分句結果回來後替換)、**字幕 overlay 整句穩定顯示**(完全旁路 YouTube 原生 caption-segment 一字一字跳的問題);UI 簡化為單一「AI 分句模式」toggle
 - **v1.6.20** — YouTube 自動產生字幕整套重做:三種分句模式可切換(預設分句 / AI 分句 / 混合模式)、字幕完全旁路原生跳動 + 整句穩定顯示、譯文過長依標點動態斷行(2 行為主)、字體 / 顏色 / 透明度 / 字型動態對齊原生英文字幕;勾「自動翻譯字幕」+ CC 未開時自動開啟 CC
 - **v1.6.0** — 字幕分頁 tab 移到「一般設定」右邊；section 重組為「自動翻譯 → 翻譯引擎 → Gemini 設定 → 進階 → 視窗設定 → Prompt」
 - **v1.6.0** — 字幕引擎新增「自訂模型」選項（與文章翻譯共用設定，prompt 可獨立）
@@ -52,6 +59,12 @@
 
 ### 效能與穩定性
 
+- **v1.8.10** — 修 LLM 偷懶把多段譯文合併成 1 段時,使用者看到字幕 / 文章顯示「«1» 中文 <<<SHINKANSEN_SEP>>> «2» 中文」殘留協定標記(YouTube 字幕 streaming 上特別常見)
+- **v1.8.8** — 修「翻譯剩餘段落」按鈕後 toast 立刻顯示完成、實際大部分內容沒翻的 bug
+- **v1.8.6** — 修「只翻文章開頭」中英夾雜的 bug(partialMode 改走純 DOM 順序,不再被 prioritizeUnits 重新排序造成 tier 1 真內文段被 truncate 掉)
+- **v1.8.1** — 修 v1.8.0 streaming 路徑漏寫 cache,「翻譯 → 還原 → 重翻同一頁」回到 cache fast path(實測同頁 9 毫秒完成)
+- **v1.7.3** — Glossary 阻塞門檻動態調整(預設 5 → 10):中等長度頁面(6-10 批)從「先等術語表再翻」改為「術語表跟翻譯並行」,首字延遲省 1.5-7.4 秒(Verge -61% / GitHub -64%)
+- **v1.7.2** — 翻譯首字延遲再優化:batch 0 切小(10 unit / 1500 chars)、Readability tier 0 細分(GitHub repo / Wikipedia 等「main 包了 chrome」的網站 batch 0 排序更準)、glossary 抽取改用 Flash Lite。同組 10 個 URL 平均 -29%(NPR 11.7s → 5.1s 省 6.6 秒)
 - **v1.6.10** — 分頁切到背景時暫停 Content Guard 與 SPA URL 輪詢,降低背景分頁的 CPU 與電力消耗
 - **v1.6.9** — 段落偵測階段大幅優化,長頁（Wikipedia / 論壇 / 長 Medium）翻譯啟動明顯變快
 
@@ -64,7 +77,136 @@
 
 ---
 
+## v1.8.x
+
+**v1.8.15** — Drive 影片 ASR 字幕翻譯 + 字幕雙語對照 toggle 大功能版本。
+
+**功能新增:**
+- **Drive 影片字幕翻譯**:支援 Google Drive 影片 viewer(drive.google.com/file/...)的 ASR 自動字幕翻譯。架構上 youtube.googleapis.com/embed iframe 內 PerformanceObserver 攔截 timedtext URL,background 用 authpayload-self-contained URL 直接 refetch json3,relay 給 top frame 的 content-drive.js。譯文走 D'(LLM 自由合句)寫進 SK.DRIVE.entries,top frame 自繪 `<shinkansen-drive-overlay>` Shadow DOM 浮層 + 跨 origin postMessage(YouTube IFrame Player API)同步 currentTime 顯示對應中文。整支 26 分鐘影片 throttled 並行 3 batch,~1 分鐘翻完,$0.05 token cost(Gemini)/ $0(Google Translate)
+- **字幕雙語對照 toggle**(`ytSubtitle.bilingualMode`,popup 加切換):YouTube + Drive 共用一個開關。打開 = 中英對照(YouTube ASR 中文 overlay 在原生英文 CC 上方 / Drive 中文浮層 + iframe 內原生英文 CC / YouTube 人工字幕「英文 + 譯文兩行」寫進原生 segment);關閉 = 純中文(預設,沿用 v1.8.14 既有行為)。即時切換不需 reload(YouTube 路徑 storage onChanged listener 即時 reapply,Drive 透過 postMessage loadModule/unloadModule captions)
+- **Drive 字幕設定共用 ytSubtitle**:user 不需為 Drive 額外設定。`ytSubtitle.engine='gemini'` Drive 走 D' LLM 合句,`'google'` 走 GT 逐段翻免費。autoTranslate / model / pricing 全部沿用
+- **popup 加 Drive 字幕翻譯 toggle**(類似 YouTube 既有 toggle,共用 ytSubtitle.autoTranslate 設定)
+
+**架構新增:**
+- 新檔 `shinkansen/content-drive.js`(top frame entry,gate hostname=drive.google.com & pathname /file/ & top frame)
+- 新檔 `shinkansen/content-drive-iframe.js`(youtube.googleapis.com/embed iframe entry,PerformanceObserver 攔 timedtext URL → background relay)
+- `manifest.json` content_scripts 加 `https://youtube.googleapis.com/*` entry(只裝 content-drive-iframe.js)+ all_urls 既有那組加 content-drive.js
+- `background.js` 加 `DRIVE_TIMEDTEXT_URL` / `TRANSLATE_DRIVE_ASR_SUBTITLE_BATCH` / `TRANSLATE_DRIVE_BATCH_GOOGLE` 三個訊息 handler;抽 `_handleAsrSubtitleBatch` helper 給 YouTube 跟 Drive 共用 D' 邏輯
+- `content-youtube.js` IIFE 末尾 export `SK.ASR = { parseJson3, mergeAsr, parseAsrResponse }` 給 content-drive.js 共用
+
+**已知限制(留 v1.8.16 dedicated 修):**
+- Drive 影片需手動按 CC 一次觸發字幕載入(自動 setOption track protocol 對 cross-origin postMessage timing 不可靠,留 v1.8.16 debug)
+- Drive overlay 控制列顯示時不動態上抬避開進度條(cross-origin iframe 監測 chrome show/hide 的 mouseenter/mouseleave event 不可靠,留 v1.8.16 改 design);目前 overlay 固定 22% 高度,實際 player 高度大時不會被進度條疊到
+
+無 regression spec(commit 1-5d 整段 Drive ASR pipeline 走 PENDING_REGRESSION 路徑 B,e2e spec 留 v1.8.16);YouTube 既有 ASR 13 + non-ASR 8 + version-check 5 + GT preserve / unit 等相關 spec 全綠驗 YouTube 路徑零踩。
+
+---
+
+**v1.8.14** — 全專案技術債 review 後一輪整理:**2 個真實 bug** + **8 條性能/正確性修補** + **7 條維護性 refactor**(無功能變更)。
+
+Bug fix:
+- A1 `content-youtube.js:_runAsrSubBatch` 結尾 `domSegmentCount: domSegs.length` 在該 scope 未定義 → ASR 字幕每跑一個子批就拋 ReferenceError 被外層 try/catch 吞掉,`YT.lastApiMs` 沒同步、debug 計時失準、log 持續噴 "asr sub-batch N failed",但字幕本身 OK 所以沒被回報。修:刪該欄位 + 暴露 `SK._runAsrSubBatch` 給 spec。新 regression `test/regression/asr-sub-batch-no-reference-error.spec.js`(SANITY 加回該行 → fail)
+- A2 設定頁用量分頁「匯出 CSV」按鈕 `$('usage-from').value` / `$('usage-to').value` 讀已不存在的 element id(v1.5.7 拆成 `usage-from-date` / `usage-from-hour` / `usage-from-min`)→ TypeError、按鈕一按必炸。修:`lib/format.js` 新增 `formatYmd` + `buildUsageCsvFilename(fromMs, toMs)` helper 改用 timestamp 構檔名。新 unit spec `test/unit/usage-csv-filename.spec.js`(6 條,SANITY 驗過)
+
+性能/正確性:
+- B1 `cache.js getCacheUsageBytes` 改用 `storage.local.getBytesInUse(null)`(舊瀏覽器 fallback 走 get(null))→ 不再每次反覆把 9.5MB 翻譯快取 JSON 拉進記憶體;`evictOldest` 接 optional `preFetchedAll` 避免雙掃。新 unit spec `test/unit/cache-bytes-getbytesinuse.spec.js`
+- B2+B3 `lib/storage.js` 新增 `getSettingsCached()`(promise cache + `storage.onChanged` invalidate);`lib/logger.js debugLog` 與 `background.js LOG_USAGE` handler 改用 cached 版本 → YouTube 一支影片上百次 LOG_USAGE / 每筆 log 都重讀整份 settings 變單次。新 unit spec `test/unit/settings-cache.spec.js`(2 條含 invalidate 行為)
+- B4 `content-spa.js` Content Guard 加 `IntersectionObserver` + `guardVisibleSet`,sweep 改成只走 viewport 附近的 entry 而非整份 STATE.translatedHTML → 長文(Wikipedia 千段)從每秒 1000 次字串相等比對 + 部分 forced layout 降到通常 < 30 entry 子集
+- B5 `options.js` usage-search input 加 150ms debounce;fetchLogs 在 `res.logs.length===0` 時 short-circuit 不 render
+- C1 `background.js` streaming 期間用 `_streamKeepAliveTimer` 每 20 秒呼叫 `chrome.runtime.getPlatformInfo` 重置 SW idle timer → 長頁翻譯中切去 5 分鐘回來,取消按鈕仍能用(原本 SW unload 後 inFlightStreams Map 消失 → abort 訊號到不了 fetch)
+- C2 `options.save()` 加 `_saveInFlight` flag,並發按下兩次儲存 short-circuit
+- C3 `lib/storage.js` 新增 `cleanupLegacySyncKeys()`,SW 啟動時一次性把 `ytPreserveLineBreaks` / `preserveLineBreaks`(v1.2.38 移除)從 storage.sync 清除,避免長期累積踩到 8KB / item quota。新 unit spec `test/unit/legacy-key-cleanup.spec.js`(3 條含冪等)
+
+Refactor(行為等價,純維護性):
+- E1 `content-detect.js` 抽 `hasBlockAncestor(el)` + `blockAncestorMemo`,leaf anchor / leaf div span 兩條補抓共用,長頁面省千次祖先比對
+- E2 `content.js restorePage` dual / single 兩分支重複的 `originalHTML.forEach` 合併成單一迴圈
+- E3 `content.js` 抽 `restoreOriginalHTMLAndReset()`,Gemini abort + Google abort 兩處共用(SPA reset 語意不同不抽)
+- E4 `content.js packBatches` 寫入 `job.idx`,兩處 `jobs.indexOf(job)` 改 `job.idx`(O(N²) → O(1) log 計算)
+- E5 `content-youtube.js _findActiveCue` 確認 `_upsertDisplayCue` 已用 findIndex upsert + sort(同 startMs 不留多筆),內 loop 簡化為 `cues[i+1].startMs`(O(N²) → O(N))
+- E6 `lib/cache.js hashText` 加 LRU memo(上限 500),getBatch + setBatch 同段原文不重算 SHA-1
+- E8 `lib/rate-limiter.js` 維護 `_tokenSum` incremental(push += / shift -=),`currentTokenSum` 從 reduce 整陣列改 O(1) 直接讀。新 unit spec `test/unit/rate-limiter-token-sum.spec.js`(4 條含壓力測試)
+
+PENDING_REGRESSION 入庫(改動已套用,spec 抽不出乾淨):A3 GMT 字幕 IndexedDB source 分類錯誤(非真漏帳,費用幾乎 $0)、B4 IO subset、B5 debounce、C1 SW keep-alive、C2 save in-flight guard。
+
+未動(獨立評估):D1-D4 中-高風險重構(三條翻譯 handler / translatePage Gemini vs Google / content-youtube 三條 streaming pattern / options form binding)、E7 usage-db compound index(IndexedDB schema migration 等用量真的暴增再說)。
+
+Full suite 357/357 pass。
+
+**v1.8.13** — 修 Google MT 翻譯大量 inline 連結段落時譯文殘留「【1/Proad】 /Proad1】 /Proad1】 ...」這類 garbage 標記的 bug(典型觸發場景:Medium 作者 byline「socials: YouTube | TikTok | Substack | ...」這類大量短 `<a>` 列表)。根因:以實 fetch `translate.googleapis.com/translate_a/single` 驗證,Google Translate 非官方端點對同段內 `【N】xxx【/N】` 配對標記超過 5 對時會 hallucinate 把標記當 list 結構亂吐 garbage tokens(3-5 對 OK、6 對開始壞、8 對完全爛、Atomic `【*N】` 不受影響連 8 個都正常)。修法:`shinkansen/content-serialize.js` `serializeNodeIterableForGoogle` 加 `GT_MAX_PAIRED_SLOTS=5` 閾值 + `countPairedInlineForGT` helper,paired-eligible inline 元素數 > 5 時降級——同段內 `GT_INLINE_TAGS` 元素改走「不加 paired 標記、純取文字」路徑(slots 仍可含 atomic),該段失去 `<a>` 連結保留(anchor text 變純文字)但譯文不會壞。新 1 條 regression spec(`test/regression/google-translate-many-markers-degrade.spec.js`,2 test:8 個 `<a>` 應降級 + 5 個 `<a>` 維持原 v1.4.2 行為的回歸保護);SANITY 把 `degrade` 寫死成 `false` → test #1 fail(received=8 markers expected=0)test #2 仍 pass,還原後 5/5 含 v1.4.1/4.2/4.3 既有 3 條全綠。Full suite 339/339 pass。
+
+**v1.8.12** — popup「⚠ 尚未設定 API Key」警告 gate 在「translatePresets 中至少一組是 Gemini」之後。使用者反映他完全沒用 Gemini(三組 preset 都改成 Google MT / 自訂模型),但 popup 一直在提醒沒填 Gemini API Key。修法:`shinkansen/lib/storage.js` 加 `presetsRequireGemini(presets)` helper(any-slot some-match;空 / undefined / 非 array → 保守回 true 跟 DEFAULT_SETTINGS 對齊),`shinkansen/popup/popup.js` 把原本 `if (!apiKey)` 改成 `if (!apiKey && presetsRequireGemini(translatePresets))`。範圍外不動的:`background.js` 三處「尚未設定 Gemini API Key」error throw 維持原狀(只在使用者主動觸發 Gemini 翻譯時才跑出來,行為正確);options 設定頁 Gemini 分頁 API Key 欄位也維持(使用者主動點進去看不算嘮叨)。新 1 條 regression(`test/unit/presets-require-gemini.spec.js`,7 條斷言;SANITY 把 `some` 改 `every` → 預設組合 + 含 gemini mixed 兩條 fail,還原後 7/7 pass)。
+
+**v1.8.11** — 文案與文件大整理(無功能變更)。**(A)近期重大更新 6 條同步**:`shinkansen/lib/release-highlights.js` / `README.md` / `docs/index.html` 三處重排順序與用字統一(極速秒翻 / 雙語對照 / 自訂 AI 模型 / AI 分句 / 中國用語黑名單 / 只翻文章開頭);「AI 智慧分句」→「AI 分句」、「百種模型」→「所有模型」、「按下翻譯後 1 秒就看到」→「按下翻譯 1 秒看到」。**(B)options.html**:「只翻文章開頭」說明拿掉「實際翻譯段數可能因 token 上限略少」尾巴(避免使用者困惑)。**(C)docs/index.html 功能特色重排**:加入「極速秒翻」(第一順位)、「中國用語黑名單」、「只翻文章開頭」三張卡;「三翻譯引擎」搬到最後;原「三翻譯引擎」內的快速鍵說明獨立成「自訂快速鍵」卡。**(D)README.md 功能特色**:移除「漸進式翻譯」改為「極速秒翻」(第一順位);加「YouTube AI 分句」(在 YouTube 字幕翻譯下方);「自訂 AI 模型」從「三翻譯引擎」拆開;新增「只翻文章開頭」條目 + 下方詳細說明段落。**(E)CHANGELOG.md 使用者功能變更摘要**:補完 v1.7.0 → v1.8.10 共 12 條使用者可感知的變更(極速秒翻 / 翻譯剩餘段落按鈕 / 只翻文章開頭 / 翻譯優先級排序 / YouTube 人工字幕 streaming / ASR overlay padding / AI 智慧分句 / 修 LLM 合併段落殘留標記 等)。**(F)測試流程說明.md 對齊現狀**:測試總數 229 → ~356 條(86 regression + 23 unit + 7 jest-unit + 1 version-check);regression spec 數 73 → 86;速查表補 24 條 regression(streaming 系列 / partial-mode / dual / fragment / priority / youtube)+ 7 條 unit(auto-translate-slot / gemini-thinking-config / google-translate-batch / model-pricing-override / openai-compat-thinking-mapping / parse-user-num / streaming-batch-incremental)。**(G)清掉廢棄檔**:刪除 untracked 的 `ziSkBLbG`(176K 隨機檔名 zip,內容是 v1.4.x 時期 shinkansen 子目錄打包,無引用)。
+
+**v1.8.10** — 修 LLM 偷懶把 N 段譯文合併成 1 段時,使用者看到字幕 / 文章顯示「«1» 中文 <<<SHINKANSEN_SEP>>> «2» 中文」殘留協定標記的 bug(YouTube 字幕 streaming 上特別常見)。雙層防禦:(A)`SK.sanitizeMarkers` defensive helper 在寫 captionMap / inject DOM 之前 strip SEP / «N» 標記(content-ns.js 加 export,套到字幕 `_injectBatchResult` / ASR heuristic / `flushOnTheFly` + 文章 `runBatch` / `STREAMING_SEGMENT` 共 5 處注入點);(B)streaming `STREAMING_DONE` 帶 `hadMismatch=true` 時 `doneReject` 觸發既有 mid-failure catch,batch 0 整批 retry 走 non-streaming(等 LLM 整批 resolve 後一次 split,容錯較高),覆蓋 streaming 已注入的合併版本。SPEC.md §2.2 規劃中加上「Gemini structured output」條目,治本路徑(`responseSchema` + JSON 格式強制)排到下個 milestone(僅限 Gemini,1-2 天工程)。新 4 條 regression(sanitize-marker-leak × 2 + streaming-batch-0-mismatch-retry × 2)。
+
+**v1.8.9** — YouTube 人工字幕 batch 0 改走 streaming(SSE)。新訊息 `TRANSLATE_SUBTITLE_BATCH_STREAM`(SW 端 `handleTranslateStream` 加 opts 支援 `_yt` cacheTag + ytSubtitle.systemPrompt/temperature/model/pricing),content-youtube.js `translateWindowFrom` 非 ASR 分支加 `_runBatch0Streaming`:STREAMING_SEGMENT 抵達立刻寫 captionMap + replaceSegmentEl,首字延遲從整批 resolve 砍成 SSE 首段。fallback 觸發:first_chunk 1.5s timeout(送 STREAMING_ABORT)、streaming mid-failure(批次 0 整批 retry via 非 streaming);Google MT / OpenAI-compat engine 不啟用 streaming 維持原路徑。同輪補 v1.8.0 PENDING 三條 streaming e2e edge case spec(abort 跨批 / mid-failure retry / first_chunk timeout fallback,清空 PENDING queue),以及非 ASR 字幕長譯文比照 ASR overlay 走 `_wrapTargetText` 切點 + `<br>` 注入(`_setSegmentText` helper,改 `replaceSegmentEl` 與 `flushOnTheFly` 兩個寫入點),修 expandCaptionLine 強制 nowrap 導致中文長句沖出畫面。新 9 條 regression(streaming-batch-0-abort / mid-failure / first-chunk-timeout、youtube-non-asr-wrap × 3、youtube-non-asr-streaming × 5)。
+
+**v1.8.8** — 修「翻譯剩餘段落」按鈕後 toast 立刻顯示完成、實際大部分內容沒翻的 bug;順帶補 v1.8.7 release 後續修補(toast action button 配色 + 近期重大更新文案 6 條)。
+
+  - **`content-toast.js`**:`.toast-action` 從半透明白底改成實心 `#0071e3` 品牌藍 + 白字(原配色在 toast 白底深字風格下幾乎隱形,使用者反映「沒看到有繼續翻譯的提示」),hover/active 用更深藍。
+  - **`lib/release-highlights.js`**:近期重大更新從 4 條擴成 6 條(按使用者敲定文案):極速秒翻 / AI 智慧分句 / 雙語對照 / 自訂 AI 模型 / 中國用語黑名單 / 只翻文章開頭。
+  - **`content.js translateUnits`**(主修): Root cause:`translateUnits` 讀 `storage.partialMode.enabled` 直接決定 `skipBatch1Plus`,完全沒檢查 `ignorePartialMode` flag。當使用者開節省模式 toggle 翻完開頭、點「翻譯剩餘段落」按鈕觸發 `translatePage({ ignorePartialMode: true })` 時,主流程的 `pmActive` 雖然正確處理豁免、不 truncate units(全 230 段都進來),但下游 `translateUnits` 仍把它當 partialMode 跑,22 批切完只翻 batch 0 的 8 段就 toast「翻譯完成」,然後 SPA observer rescan 機制每隔幾秒重觸發 → 又只翻 batch 0,一輪 8 / 17 / 12 段慢爬。修法:`translateUnits` 簽名加 `ignorePartialMode` option,內部新增 `partialModeActive = partialMode.enabled && !ignorePartialMode` 旗標,`firstBatchUnits`(line 273)與 `skipBatch1Plus`(line 448)兩處改用此旗標;callsite(`translatePage`)傳 `ignorePartialMode: !!options.ignorePartialMode`。新 regression `test/regression/translate-ignore-partial-mode-runs-all-batches.spec.js`(SANITY 反向驗證 fail-then-pass)。debug 過程在 `translateUnits` / `translatePage` 加 8 條 instrumentation log(translatePage entry / packBatches detail / main flow start / stream firstChunkOrTimeout / parallel dispatch decision / after stream donePromise / after parallelP / about to fire success toast)保留作為未來除錯材料(buffer-based,不會印 console)。
+
+**v1.8.7** — 「只翻文章開頭」翻完後的銜接體驗 + UI 重新定位:**(A)使用者順暢操作流程**——partialMode 翻完後,toast 訊息變成「已翻譯前 N 段(共 M 段)」並顯示「翻譯剩餘段落」按鈕(常駐直到使用者點按或關閉)。點按 → `translatePage({ ignorePartialMode: true })` 走完整翻譯,前 N 段從本地快取 fast path 命中(0 token + 9ms)、只後段打 API,**toggle 設定本身不被改寫**(下次翻新頁面仍走節省模式)。**(B)UI 重新定位**——「只翻文章開頭」從 Gemini 分頁的「效能」section 內(被視為微調)獨立成「**節省模式**」section,搬到「配額」之前更顯眼的位置,定位為一般使用者會用的功能而非進階參數。toggle label 也從「只翻文章開頭(節省費用)」精簡成「**只翻文章開頭**」(子說明保留費用解釋)。
+
+  - **`content-toast.js`**:`opts.action = { label, onClick }` 新增,toast 內加 `.toast-action` 按鈕(Shadow DOM 內 button + click listener);有 `action` 時 success toast 不 auto-hide;`hideToast` 清乾淨 action handler 避免 callback 殘留。
+  - **`content.js translatePage` / `translatePageGoogle`**:加 `options.ignorePartialMode` 參數,STATE.translated=true + ignorePartialMode 時不走 restorePage 早退,改靜默重置 `STATE.translated=false` 後跑完整翻譯;partialMode 判斷加豁免條件(toggle 啟用但 ignorePartialMode=true 時走完整流程)。`pmSkippedCount` 追蹤被截掉的段數,success toast 在 `pmActive && pmSkippedCount > 0` 時帶 `action: { label: '翻譯剩餘段落', onClick: () => SK.translatePage({ ...options, ignorePartialMode: true }) }`。
+  - **`options/options.html`**:刪除 Gemini 分頁「效能」section 內的 partialMode label;新建獨立「節省模式」section 插在「配額」之前。說明文字更新反映 v1.8.6 DOM 順序行為 + v1.8.7 「翻譯剩餘段落」按鈕。
+  - **新 regression**:`test/regression/translate-partial-mode-ignore.spec.js` 鎖「ignorePartialMode=true + STATE.translated=true 時不走 restorePage 早退」(SANITY 雙驗通過——測 A 不帶 flag 走 restorePage / 測 B 帶 flag 跑完整流程)。
+
+**v1.8.6** — 修「只翻文章開頭」中英夾雜的 bug。在 wheresyoured.at / Substack / Ghost 等部落格上,prioritizeUnits 把短內文段(score < 5,例如「I feel nothing when I see an LLM's output」這種 ~150 字 + 1 個逗號的純內文)排到 tier 1 後面,partialMode 取前 25 段全給 tier 0(score >= 5 的長段)→ tier 1 的真內文段被 truncate 掉 → 中間夾雜未翻段落,使用者看到「翻譯-原文-翻譯-原文」交錯。修法:partialMode 啟用時跳過 prioritizeUnits,改走純 DOM 順序——對使用者語意是「翻頁面 DOM 前 N 段」(視覺連續中文),不是「prioritize 認為最重要的 N 段」。Trade-off:Wikipedia / GitHub 等「DOM 前段是 nav / chrome」的網站開 partialMode 會翻到導覽列(回到 v1.7.0 之前行為),但這類網站非 partialMode 主要使用情境(使用者比較會在文章型部落格 / 新聞站開節省模式)。
+
+**v1.8.5** — 修 v1.8.3「只翻文章開頭」兩個沒做完的行為。Bug 1:toast 仍顯示整頁段數(例如 25 / 227),沒對應實際翻譯量。Bug 2:rescan(延遲掃新段落)+ SPA observer(捲動偵測新內容)兩條動態翻譯路徑沒檢查 partialMode,使用者捲到下半頁時 Shinkansen 仍會偵測新段落並開始翻譯——這違反「節省費用」的初衷。修法:`translatePage` 在 prioritizeUnits + maxTotalUnits truncate 後,partialMode 啟用再次 truncate units 到 partialMode.maxUnits(讓 toast 顯示 25 / 25),同時設 `STATE.partialModeActive` 旗標;`rescanTick` + `content-spa.js spaObserverRescan` 兩條路徑開頭加 `if (STATE.partialModeActive) return`,啟用時完全跳過動態翻譯。`restorePage` 重設旗標。對使用者的視覺效果:勾選 toggle 後翻譯該頁,只看到「翻譯中... 25 / 25」+「已翻譯 25 段」,捲到下半頁譯文不會繼續延伸,完全符合「我只想看開頭」的意圖。
+
+**v1.8.4** — 修 v1.8.3 設定頁整份 HTML 被重複黏接的 bug。`shinkansen/options/options.html` 從 991 行膨脹到 1980 行,在 line 991 出現畸形接縫 `</html>html lang="zh-Hant">`(第一份結尾的 `</html>` 直接拼上第二份開頭的 `html lang="zh-Hant">`,中間少了 `<`)→ 第二份完整 UI 跑出來變成「設定頁授權資訊段下方再出現一份完整的 Shinkansen 標題、Tab 列與所有分頁」,使用者誤以為打開兩份設定頁。猜想根因:v1.8.3 partialMode UI 改動時用 Python 腳本做兩次全形標點轉換,第二次跑時 anchor 字串已是全形版本,`s.find()` 回 -1,導致 `s = s[:-1] + new_block + s[j:]` 範圍計算錯誤。修法:用 head 前 990 行 + 補 `</html>` 重組正確 file。
+
+**v1.8.3** — 新增「**只翻文章開頭(節省費用)**」選項。對 token 用量敏感、想先預覽再決定要不要看完整文章的使用者,可在 Gemini 分頁開啟 toggle:翻譯只跑 batch 0(經 prioritizeUnits 推前的內文核心 N 段),跳過 batch 1+,大幅減少 token 用量。預設關閉,可調段數範圍 5-50(預設 25)。**漸進式翻譯流程**:使用者開節省模式翻完開頭 → 想看完整翻譯時關閉 toggle 重新翻譯 → 前面已翻好的段落從本地快取自動命中(0 token 收費),只 batch 1+ 才打 API。技術上重用 v1.8.0 streaming + cache 路徑,但對使用者完全隱藏 streaming 概念。
+
+  - **`lib/storage.js`**:`DEFAULT_SETTINGS.partialMode = { enabled: false, maxUnits: 25 }`,getSettings deep merge。
+  - **`options/options.html` Gemini 分頁**:加 `partialModeEnabled` toggle + `partialModeMaxUnits` number input(min=5 max=50),說明文字明確標示「漸進式翻譯流程」與「重翻不會重複收費」。標點全形,結尾無句號(§13/§14)。
+  - **`options/options.js`**:load/save/reset/sanitizeImport 四處接 partialMode。
+  - **`content.js translateUnits`**:讀 partialMode → 啟用時 packBatches 第一批 limit 用 partialMode.maxUnits 取代 BATCH0_UNITS;主流程加 `skipBatch1Plus = partialMode.enabled` 旗標,streaming 路徑 + fallback 路徑都會在啟用時跳過 `runWithConcurrency(jobs.slice(1))`。BATCH0_CHARS=3700 仍用內部限制不暴露。
+  - **新 regression**:`test/regression/translate-partial-mode.spec.js` 鎖「partialMode.enabled=true 時 batch 1+ 不被 dispatch + batch 0 size = partialMode.maxUnits」。SANITY 雙驗通過。
+
+**v1.8.2** — YouTube ASR 字幕 overlay 黑底 padding 對齊原生。`.cue` padding 從 `0.15em 0.7em`(@ 18px font ≈ 上下 2.7px / 左右 12.6px)縮成 `0.05em 0.3em`(≈ 上下 0.9px / 左右 5.4px),左右黑底各省 7px。原本 ASR 字幕黑底比 YouTube 原生「一行字幕」黑底大很多(左右各多出近半字寬、上下也鬆),v1.8.2 後緊貼文字、視覺比例對齊原生字幕。純 CSS 微調,不影響翻譯邏輯或字幕分句行為。
+
+**v1.8.1** — 修 v1.8.0 streaming 路徑漏寫 cache 的 bug。原本「翻譯 → 還原 → 重翻同一頁」應該秒載入(cache fast path),但 v1.8.0 的 streaming `handleTranslateStream` 沒做 cache lookup + write,每次重翻都要重打 Gemini API。修法:streaming 開頭先 `cache.getBatch()` 查 cache,若全部命中走 fast path 立即推 `STREAMING_FIRST_CHUNK + STREAMING_SEGMENT × N + STREAMING_DONE`(不打 API,usage = 0);若有 miss 才走 streaming,結束後 `cache.setBatch()` 寫回 cache。cache key suffix 跟 `handleTranslate` 一致(含 glossary / fixedGlossary / forbidden hash + model),確保「翻完還原重翻」必命中 fast path。實測 TWZ 同頁 Run 1 batch 0 streaming 等 6.5 秒,Run 2 cache fast path **9 毫秒完成、首字延遲 4ms**——「一閃就載入」效果回來了。Probe 工具加 `SKIP_CLEAR_CACHE=1` env var 用來驗證 cache hit 行為(原本 probe 每次跑都 CLEAR_CACHE,沒辦法測 cache hit fast path)。
+
+**v1.8.0** — 文章翻譯 batch 0 改用 Gemini streaming + batch 1+ 在 first_chunk 抵達時同步並行 dispatch。**首字延遲從 v1.7.3 的 2.5-4.4 秒砍到 1.0-1.2 秒(平均 -66%)**——使用者按下翻譯後 1 秒內就看到頁面開頭變中文。同時 batch 0 size 從 10 unit / 1500 chars 擴大到 25 unit / 3700 chars(streaming 後 batch 0 size 不影響首字延遲),涵蓋的文章範圍從「開頭幾段」變成「整段內文前 25 段」。Scope 嚴格鎖在文章翻譯 batch 0 一個入口——字幕(`TRANSLATE_SUBTITLE_BATCH` / ASR)、術語表抽取(`EXTRACT_GLOSSARY`)、Google Translate、自訂模型路徑完全不動,維持既有 non-streaming 行為與容錯網。
+
+  - **新增訊息協定**:`TRANSLATE_BATCH_STREAM`(content → SW)+ `STREAMING_FIRST_CHUNK` / `STREAMING_SEGMENT` / `STREAMING_DONE` / `STREAMING_ERROR` / `STREAMING_ABORTED`(SW → content)+ `STREAMING_ABORT`(content → SW)。每個 streaming 任務有獨立 `streamId`,SW 內 `inFlightStreams` Map 維護 streamId → AbortController 對映。
+  - **`lib/gemini.js translateBatchStream`**:streamGenerateContent endpoint(`?alt=sse`)+ ReadableStream + incremental SSE parser。每收到完整 SHINKANSEN_SEP 就 emit 該段譯文,占位符 `⟦/N⟧` 切在 chunk 邊界時 parser 等到下一個 SEP 才 emit(占位符在段落內部,不會被截)。
+  - **`background.js handleTranslateStream`**:fire-and-forget streaming task,結果透過 `tabs.sendMessage` 推回 sender tab。完整 usage accounting + addUsage(跟 non-streaming 一致)。
+  - **`content.js runBatch0Streaming`**:onMessage listener 收 SW 推來的 streaming 訊息,first_chunk 抵達時 resolve promise 讓主流程同步 dispatch batch 1+,segment 抵達時立即 SK.injectTranslation。1.5 秒沒收 first_chunk → fallback 走 v1.7.x 序列 batch 0 + 並行路徑。中段失敗 → batch 0 整批用 non-streaming retry。
+  - **abort 跨批傳播**:`signal.addEventListener('abort')` 在 streaming 進行中觸發 → 送 `STREAMING_ABORT` 給 SW + 解開 listener + 並行 batch 1+ 透過 runWithConcurrency signal 檢查中斷。
+  - **新 regression**:5 條 unit spec(`test/unit/streaming-batch-incremental.spec.js`,incremental emit / SSE chunk split / 占位符 chunk split / hadMismatch / abort)+ 1 條 e2e spec(`test/regression/streaming-batch-0-first-chunk-triggers-parallel.spec.js`,first_chunk 觸發並行)+ 既有 `translate-priority-sort.spec.js` test #2 改鎖 streaming fallback 路徑。SANITY 雙驗通過。
+  - **真實 5 URL 實測**(2026-04-28,Gemini 3 Flash):TWZ 4400ms → 1142ms(-74%)、Wikipedia Tea 4068ms → 1186ms(-71%)、GitHub 3125ms → 1071ms(-66%)、NPR 2561ms → 1052ms(-59%)、CSS-Tricks 2495ms → 1030ms(-59%)。完整實測資料見 `reports/streaming-implementation-2026-04-28.md`。
+  - **設計 probe 報告**:實作前先寫 `tools/probe-streaming.js` + `tools/probe-streaming-concurrent.js` 驗證 4 個關鍵假設(Gemini Flash first-token-latency / batch 0 size 不影響首字 / 並行 batch 不拖慢 streaming / 整頁完成時間不延長),實測完才動 production code,符合硬規則 §11「以真實資料為基石」。詳見 `reports/streaming-probe-2026-04-28.md`。
+
 ## v1.7.x
+
+**v1.7.3** — Glossary 阻塞門檻動態調整。`blockingThreshold` 預設從 5 提高到 10——中等長度頁面(6-10 批)從原本「先等術語表再翻」(blocking)改為「術語表跟翻譯並行」(fire-and-forget),省下 EXTRACT_GLOSSARY 1.5-7.4 秒的首字延遲;長頁(>10 批)仍 blocking 確保跨批次術語一致。新增使用者可調設定欄位「阻塞門檻(批次數)」於術語表分頁,範圍 0(永遠 fire-and-forget)~ 50(幾乎都 blocking,等同 v1.7.2 之前行為)。實測 5 個原本 blocking 的網站全部變 fire-and-forget,Verge 從 5.2s → 2.0s 省 3.2 秒(-61%),GitHub 從 4.2s → 1.5s 省 2.6 秒(-64%),NPR / CSS-Tricks / Smashing 各省 0.1-0.5 秒。Trade-off:fire-and-forget 路徑下 batch 0 翻的內容沒帶術語表,可能跟後段翻譯用詞略有不一致——對 H1 標題 / 文章開頭(prioritizeUnits 推前的內容)風險低,術語密度高的特殊情境使用者可調高門檻或設極大值關閉此優化。
+
+  - **常數同步**:`lib/storage.js DEFAULT_SETTINGS.glossary.blockingThreshold = 10` + `content-ns.js SK.GLOSSARY_BLOCKING_THRESHOLD_DEFAULT = 10`(content script 端鏡像常數,storage 沒提供時的 fallback,必須跟 storage default 同步)。
+  - **options 分頁新欄位**:術語表分頁加 `<input id="glossaryBlockingThreshold" type="number" min="0" max="50">`,load/save 用 `parseUserNum`(v1.6.19 helper,空字串 fallback 預設、合法數字含 0 保留)。
+  - **import sanitize 放寬**:`>= 1` 改為 `>= 0`,讓「永遠 fire-and-forget」變成合法選項。
+
+**v1.7.2** — 翻譯優先級三件套延續優化:**(A)batch 0 切小**——首字 batch 限制 10 unit / 1500 chars(原 20/3500),序列等 Gemini 的時間從平均 5.4s → 3.4s;**(B)Readability tier 0 細分**——`prioritizeUnits` 從 3 tier 升級成 4 tier,用 readability content score(文字長度 + 逗號數 + heading tag + 含 P 子孫,刻意不用 class/id 名稱啟發式)切「真內文」與「main 內的工具列」,徹底解決 GitHub repo / Wikipedia 等「`<main>` 包了 chrome」造成的 batch 0 排序失敗;**(C)glossary 模型獨立 + 預設 Flash Lite**——術語抽取改用 `gemini-3.1-flash-lite-preview`(可在設定頁 4 選 1 切換),比 Flash 快 18% + 便宜 5 倍,terms 品質接近。同一組 10 個 URL 重測,OFF 模式首字延遲平均 -29%(中位數 -36%、最佳 -43%),ON 模式平均 -26%(NPR 從 11.7s → 5.1s 省 6.6 秒)。
+
+  - **batch 0 limit**:`content-ns.js SK.BATCH0_UNITS=10 / SK.BATCH0_CHARS=1500`,`packBatches` 加 `firstMaxUnits` / `firstMaxChars` 參數,jobs.length=0 時用第一批 limit,之後切回預設;`translateUnits` / `translateUnitsGoogle` 兩處呼叫傳 BATCH0_*。
+  - **tier 0 細分**:`content-detect.js` 加 `readabilityScore(el)` helper(只用結構訊號,不引整套 `@mozilla/readability` 60KB bundle),`prioritizeUnits` 在 main/article 內依 score >= 5 切 tier 0a / 0b。實測 GitHub batch 0 從「Notifications / Fork / Star / Code / Issues」UI tab 變成「anthropics/anthropic-sdk-typescript / Folders and files / Documentation」README 內容;Wikipedia "Tea" batch 0 從「Article / Talk / Read / View source」工具列變成「H1 Tea / 內文 P 674 字 / 536 字 / 285 字」真文章內容。
+  - **glossary 模型**:`storage.js DEFAULT_SETTINGS.glossary.model = 'gemini-3.1-flash-lite-preview'`,`lib/gemini.js extractGlossary` 優先讀 `glossaryConfig.model`(空字串 fallback 主翻譯 model),`background.js handleExtractGlossary` cost 計算用 `getPricingForModel(glossaryModel)` 不再硬綁主 settings.pricing;options 頁術語表分頁加 dropdown(Flash Lite / Flash / Pro / 與主翻譯相同 4 選 1)。
+  - **新 regression**:`test/regression/translate-priority-tier-0-readability.spec.js` 鎖 tier 0 細分行為(SANITY 雙驗通過)。既有 11 條相關 spec 全綠。
+  - **probe 工具改進**:`tools/probe-priority.js` 加 `SHINKANSEN_PROBE_PROFILE` env var——踩到 Chrome SW bytecode cache 的坑(同 PROFILE 路徑 + extension 程式碼變動時,SW 載入舊 cached 版),要求每次測試用全新時間戳路徑才能拿到真實新行為。
+  - **完整實測資料**:見 `reports/priority-sort-probe-2026-04-28.md` 的 v1.7.2 章節(§8-§10)。
+
+**v1.7.1** — 翻譯優先級排序 + batch 0 序列化。長網頁翻譯時使用者最先看到的譯文從「導覽列 / cookie 同意書 / TOC」變成「文章標題 + 第一段內文」。兩個改動互補:`SK.prioritizeUnits` 對 `collectParagraphs` 結果做 stable sort(tier 0 = `<main>` / `<article>` 後代;tier 1 = 長段落 + 連結密度 < 50%;tier 2 = 其他),把內文核心推到 array 前面;`translateUnits` / `translateUnitsGoogle` 改成「序列跑 batch 0,完成後才用 worker pool 並行 batch 1+」,確保最先注入 DOM 的批次必定是 array 開頭那批。
+
+  - **`SK.prioritizeUnits`(新,`content-detect.js`)**:tier 函式只用語意訊號(HTML5 tag + ARIA role + 文字長度 + 連結密度),不綁站點 class / id,符合硬規則 §8 結構通則。stable sort(V8 Array.prototype.sort 自 2018 起為 stable)保留同 tier 內的 DOM 順序。注入用 element reference,不依賴 array index → 排序不影響注入位置。
+  - **batch 0 序列(`content.js`)**:`runBatch` helper 抽出後,主流程改為 `await runBatch(jobs[0]); runWithConcurrency(jobs.slice(1), maxConcurrent, runBatch)`。延遲代價約 batch 0 的 API 耗時(Gemini Flash 冷啟動約 4-7 秒;暖 cache 後 2-4 秒);換來的好處是使用者最早看到的譯文是文章開頭,且 Gemini implicit cache 可在 batch 0 暖完後讓 batch 1+ 並行批吃 cache。
+  - **新 regression**:`test/regression/translate-priority-sort.spec.js` 鎖兩件事——tier 0 排序到 array 前 + batch 0 序列 / batch 1+ 並行的時序行為。SANITY 雙驗(破壞排序 fail / 破壞序列 fail)。
+  - **真實站點實測**(2026-04-28,10 個網頁,Gemini 3 Flash):排序機制 8/10 顯著改善(TWZ / Wikipedia / Cloudflare / Verge / Ars / NPR / Smashing / CSS-Tricks 都把 H1 / H2 / 文章內文推到 batch 0);2/10 無變化(HN 用 `<table>` 沒 `<main>`、GitHub 把 UI tab 也塞在 `<main>` 內,tier 0 太粗——這個 framework 限制留待未來細分);時序設計 10/10 全部驗證 batch 1-N 並行 dispatch(Δ < 2ms)。詳細實測資料見 `reports/priority-sort-probe-2026-04-28.md`。
 
 **v1.7.0** — YouTube 自動產生字幕(ASR)整套生產級體驗 + 設定簡化。Highlights:**AI 智慧分句**——把整批 ASR 片段送 Gemini 依語意重新分句後翻譯,中文字幕從「破碎的詞」變「完整句子」;**混合模式預設**——預設分句先秒出,AI 分句結果回來後替換成更精緻版本;**字幕 overlay 整句穩定顯示**——完全旁路 YouTube 原生 caption-segment 一字一字跳的問題,控制列出現時自動上移避開進度條;**設定 UI 簡化**——三選一 radio → 單一「AI 分句模式」toggle(開啟=混合 / 關閉=原始分句);**popup 紅點 CSS bug 修**——`.update-dot[hidden]` 規則漏寫導致殘留紅點永遠顯示。
 

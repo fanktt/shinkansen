@@ -4,7 +4,7 @@
 import { browser } from '../lib/compat.js';
 import { DEFAULT_SETTINGS, DEFAULT_SYSTEM_PROMPT, DEFAULT_GLOSSARY_PROMPT, DEFAULT_SUBTITLE_SYSTEM_PROMPT, DEFAULT_FORBIDDEN_TERMS } from '../lib/storage.js';
 import { TIER_LIMITS } from '../lib/tier-limits.js';
-import { formatTokens, formatUSD } from '../lib/format.js';
+import { formatTokens, formatUSD, parseUserNum, buildUsageCsvFilename } from '../lib/format.js';
 import { isWorthNotifying } from '../lib/update-check.js'; // v1.6.5
 
 // 向下相容：舊程式碼大量使用 DEFAULTS，保留別名避免大範圍搜尋取代
@@ -58,15 +58,6 @@ function applyTierToInputs(tier, model) {
 }
 
 const $ = (id) => document.getElementById(id);
-
-// v1.6.19: 解析 input value——空字串/非法字元走 default,合法有限數字(含 0、負數)保留。
-// 取代 `Number(v) || default`(會把 0 當 falsy 改回預設)的舊寫法。
-function parseUserNum(rawValue, defaultValue) {
-  const v = String(rawValue ?? '').trim();
-  if (v === '') return defaultValue;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : defaultValue;
-}
 
 async function load() {
   const saved = await browser.storage.sync.get(null);
@@ -123,11 +114,19 @@ async function load() {
   $('maxUnitsPerBatch').value = s.maxUnitsPerBatch ?? 20;
   $('maxCharsPerBatch').value = s.maxCharsPerBatch ?? 3500;
   $('maxTranslateUnits').value = s.maxTranslateUnits ?? 1000;
+  // v1.8.3: partialMode toggle + size
+  const pm = { ...DEFAULTS.partialMode, ...(s.partialMode || {}) };
+  $('partialModeEnabled').checked = pm.enabled === true;
+  $('partialModeMaxUnits').value = pm.maxUnits;
   $('maxRetries').value = s.maxRetries ?? 3;
 
   // v0.69: 術語表一致化設定
   const gl = { ...DEFAULTS.glossary, ...(s.glossary || {}) };
   $('glossaryEnabled').checked = gl.enabled !== false;
+  // v1.7.2: 術語擷取獨立模型(預設 Flash Lite),空字串表示「與主翻譯相同」
+  $('glossaryModel').value = gl.model ?? DEFAULTS.glossary.model;
+  // v1.7.3: 阻塞門檻可調(預設 10,> 此值才 blocking,≤ 此值走 fire-and-forget)
+  $('glossaryBlockingThreshold').value = gl.blockingThreshold ?? DEFAULTS.glossary.blockingThreshold;
   $('glossaryTemperature').value = gl.temperature;
   $('glossaryTimeout').value = gl.timeoutMs;
   $('glossaryPrompt').value = gl.prompt;
@@ -445,7 +444,23 @@ async function refreshPresetKeyBindings() {
   } catch { /* Safari / 舊瀏覽器不支援 commands API，欄位維持 '—' */ }
 }
 
+// v1.8.14: 並發 save 防護
+// 之前 save() 是 read-modify-write(sync.get → 組整桶 → sync.set),沒任何 lock。
+// 兩個 Tab 的儲存按鈕共用同一個 save(),快速連按 / 跨 Tab 同時改 / 打字+按鈕同時觸發
+// → 後一筆 set 可能蓋掉前一筆 get 之間的 in-flight 變更。
+let _saveInFlight = false;
+
 async function save() {
+  if (_saveInFlight) return;
+  _saveInFlight = true;
+  try {
+    return await _saveImpl();
+  } finally {
+    _saveInFlight = false;
+  }
+}
+
+async function _saveImpl() {
   // v0.62 起：apiKey 單獨寫到 browser.storage.local，不進 sync
   const apiKeyValue = $('apiKey').value.trim();
   await browser.storage.local.set({ apiKey: apiKeyValue });
@@ -479,6 +494,11 @@ async function save() {
     maxUnitsPerBatch: parseUserNum($('maxUnitsPerBatch').value, 20),
     maxCharsPerBatch: parseUserNum($('maxCharsPerBatch').value, 3500),
     maxTranslateUnits: parseUserNum($('maxTranslateUnits').value, 1000),
+    // v1.8.3: 只翻文章開頭(節省費用)
+    partialMode: {
+      enabled: $('partialModeEnabled').checked,
+      maxUnits: parseUserNum($('partialModeMaxUnits').value, 25),
+    },
     // 只有 custom tier 才寫入 override(其他 tier 的數字從對照表讀,不存)
     rpmOverride: $('tier').value === 'custom' ? (Number($('rpm').value) || null) : null,
     tpmOverride: $('tier').value === 'custom' ? (Number($('tpm').value) || null) : null,
@@ -486,10 +506,13 @@ async function save() {
     // v0.69: 術語表一致化
     glossary: {
       enabled: $('glossaryEnabled').checked,
+      // v1.7.2: 術語擷取獨立模型;空字串 = 與主翻譯模型相同(舊行為)
+      model: $('glossaryModel').value,
       prompt: $('glossaryPrompt').value,
       temperature: Number($('glossaryTemperature').value) || 0.1,
       skipThreshold: DEFAULTS.glossary.skipThreshold,
-      blockingThreshold: DEFAULTS.glossary.blockingThreshold,
+      // v1.7.3: blockingThreshold 使用者可調(0 = 永遠 fire-and-forget,大值 = 幾乎都 blocking)
+      blockingThreshold: parseUserNum($('glossaryBlockingThreshold').value, DEFAULTS.glossary.blockingThreshold),
       timeoutMs: Number($('glossaryTimeout').value) || 60000,
       maxTerms: DEFAULTS.glossary.maxTerms,
     },
@@ -712,6 +735,9 @@ $('gemini-reset-all')?.addEventListener('click', () => {
   $('maxUnitsPerBatch').value     = D.maxUnitsPerBatch;
   $('maxCharsPerBatch').value     = D.maxCharsPerBatch;
   $('maxTranslateUnits').value    = D.maxTranslateUnits;
+  // v1.8.3: 只翻文章開頭重設
+  $('partialModeEnabled').checked = D.partialMode.enabled;
+  $('partialModeMaxUnits').value  = D.partialMode.maxUnits;
   markDirty();
   $('save-gemini-status').textContent = '欄位已重設，請按「儲存設定」生效';
   setTimeout(() => { $('save-gemini-status').textContent = ''; }, 4000);
@@ -997,7 +1023,7 @@ function sanitizeImport(raw) {
     if (typeof gl.temperature === 'number' && gl.temperature >= 0 && gl.temperature <= 2) glClean.temperature = gl.temperature;
     if (typeof gl.timeoutMs === 'number' && gl.timeoutMs >= 3000 && gl.timeoutMs <= 60000) glClean.timeoutMs = gl.timeoutMs;
     if (typeof gl.skipThreshold === 'number' && Number.isInteger(gl.skipThreshold) && gl.skipThreshold >= 0) glClean.skipThreshold = gl.skipThreshold;
-    if (typeof gl.blockingThreshold === 'number' && Number.isInteger(gl.blockingThreshold) && gl.blockingThreshold >= 1) glClean.blockingThreshold = gl.blockingThreshold;
+    if (typeof gl.blockingThreshold === 'number' && Number.isInteger(gl.blockingThreshold) && gl.blockingThreshold >= 0) glClean.blockingThreshold = gl.blockingThreshold;
     if (typeof gl.maxTerms === 'number' && Number.isInteger(gl.maxTerms) && gl.maxTerms >= 1 && gl.maxTerms <= 500) glClean.maxTerms = gl.maxTerms;
     if (Object.keys(glClean).length > 0) clean.glossary = glClean;
   }
@@ -1051,6 +1077,17 @@ function sanitizeImport(raw) {
       }
     }
     if (Object.keys(drClean).length > 0) clean.domainRules = drClean;
+  }
+
+  // v1.8.3: partialMode 子物件
+  if (raw.partialMode && typeof raw.partialMode === 'object') {
+    const pm = raw.partialMode;
+    const pmClean = {};
+    if (typeof pm.enabled === 'boolean') pmClean.enabled = pm.enabled;
+    if (typeof pm.maxUnits === 'number' && Number.isInteger(pm.maxUnits) && pm.maxUnits >= 5 && pm.maxUnits <= 50) {
+      pmClean.maxUnits = pm.maxUnits;
+    }
+    if (Object.keys(pmClean).length > 0) clean.partialMode = pmClean;
   }
 
   return { clean, warnings };
@@ -1707,7 +1744,12 @@ $('usage-to-now')?.addEventListener('click', () => {
   loadUsageData();
 });
 // v1.2.60: 搜尋框即時過濾
-$('usage-search')?.addEventListener('input', applyUsageSearch);
+// v1.8.14: 加 150ms debounce — 紀錄到 1-2K 筆時每打一字整表 re-render 會卡
+let _usageSearchTimer = null;
+$('usage-search')?.addEventListener('input', () => {
+  clearTimeout(_usageSearchTimer);
+  _usageSearchTimer = setTimeout(applyUsageSearch, 150);
+});
 $('usage-model-filter')?.addEventListener('change', applyUsageSearch);
 
 // 粒度切換
@@ -1736,10 +1778,8 @@ $('usage-export-csv').addEventListener('click', async () => {
   const blob = new Blob([res.csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const fromStr = $('usage-from').value.replace(/-/g, '');
-  const toStr = $('usage-to').value.replace(/-/g, '');
   a.href = url;
-  a.download = `shinkansen-usage-${fromStr}-${toStr}.csv`;
+  a.download = buildUsageCsvFilename(from, to);
   a.click();
   URL.revokeObjectURL(url);
 });
@@ -1784,12 +1824,15 @@ async function fetchLogs() {
       payload: { afterSeq: logLatestSeq },
     });
     if (!res?.ok) return;
-    if (res.logs && res.logs.length > 0) {
-      allLogs = allLogs.concat(res.logs);
-      // 前端也限制 buffer 上限，避免記憶體無限成長
-      if (allLogs.length > 2000) {
-        allLogs = allLogs.slice(allLogs.length - 2000);
-      }
+    // v1.8.14: 沒新 log 直接 return,不重 render(原本即使空也整表 innerHTML 一遍)
+    if (!res.logs || res.logs.length === 0) {
+      if (res.latestSeq) logLatestSeq = res.latestSeq;
+      return;
+    }
+    allLogs = allLogs.concat(res.logs);
+    // 前端也限制 buffer 上限，避免記憶體無限成長
+    if (allLogs.length > 2000) {
+      allLogs = allLogs.slice(allLogs.length - 2000);
     }
     if (res.latestSeq) logLatestSeq = res.latestSeq;
     renderLogTable();

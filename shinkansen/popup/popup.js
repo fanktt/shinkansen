@@ -5,7 +5,7 @@ import { formatBytes, formatTokens, formatUSD } from '../lib/format.js';
 import { RELEASE_HIGHLIGHTS } from '../lib/release-highlights.js';
 import { shouldShowWelcomeNotice } from '../lib/welcome-notice.js';
 import { isWorthNotifying } from '../lib/update-check.js';
-import { pickPopupSlot } from '../lib/storage.js';
+import { pickPopupSlot, presetsRequireGemini } from '../lib/storage.js';
 
 // v1.6.5: 把 markdown 風的 **粗體** 標記轉成 <strong>，其他字符做 escapeHtml
 function highlightToHtml(s) {
@@ -182,7 +182,7 @@ async function init() {
   }
 
   // v0.62 起：autoTranslate 仍走 sync（跨裝置同步），apiKey 改走 local（不同步）
-  const { autoTranslate = false, displayMode = 'single' } = await browser.storage.sync.get(['autoTranslate', 'displayMode']);
+  const { autoTranslate = false, displayMode = 'single', translatePresets = [] } = await browser.storage.sync.get(['autoTranslate', 'displayMode', 'translatePresets']);
   const { apiKey = '' } = await browser.storage.local.get(['apiKey']);
   $('auto').checked = autoTranslate;
 
@@ -208,9 +208,24 @@ async function init() {
       // 沒設定過視為 true（與 DEFAULT_SETTINGS.ytSubtitle.autoTranslate 對齊）
       $('yt-subtitle-toggle').checked = ytSubtitle.autoTranslate !== false;
     }
-  } catch { /* 非 YouTube 頁面，保持 hidden */ }
+    // commit 5a':Drive 影片 viewer toggle 共用 ytSubtitle.autoTranslate
+    // (user 不需要為 Drive 多做設定,跟 YouTube 字幕用同一個開關)
+    if (/^https:\/\/drive\.google\.com\/file\//.test(url)) {
+      $('drive-subtitle-row').hidden = false;
+      const { ytSubtitle = {} } = await browser.storage.sync.get('ytSubtitle');
+      $('drive-subtitle-toggle').checked = ytSubtitle.autoTranslate !== false;
+    }
+    // commit 5c:雙語對照 toggle(YouTube + Drive 影片頁都顯示,共用 ytSubtitle.bilingualMode)
+    if (url.includes('youtube.com/watch') || /^https:\/\/drive\.google\.com\/file\//.test(url)) {
+      $('bilingual-row').hidden = false;
+      const { ytSubtitle = {} } = await browser.storage.sync.get('ytSubtitle');
+      $('bilingual-toggle').checked = ytSubtitle.bilingualMode === true;
+    }
+  } catch { /* 非影片頁面,保持 hidden */ }
 
-  if (!apiKey) {
+  // v1.8.12: 只有當 translatePresets 中有任一 slot 用 Gemini engine 時,才提醒未設 API Key。
+  // 使用者若三組 preset 都改成 Google MT / 自訂模型,popup 不再嘮叨他沒填 Gemini Key。
+  if (!apiKey && presetsRequireGemini(translatePresets)) {
     statusEl.textContent = '狀態：⚠ 尚未設定 API Key';
     statusEl.style.color = '#ff3b30';
   }
@@ -298,6 +313,37 @@ $('yt-subtitle-toggle').addEventListener('change', async (e) => {
   }
 });
 
+// commit 5a':Drive toggle 共用 ytSubtitle.autoTranslate(寫 storage,跟 YouTube popup
+// 的 SET_SUBTITLE message 設計不同——因 Drive 沒 SPA 切影片,單純 storage 即時 sync 即可。
+// content-drive.js listen onChanged 即時生效)。
+$('drive-subtitle-toggle').addEventListener('change', async (e) => {
+  const enabled = e.target.checked;
+  try {
+    const { ytSubtitle = {} } = await browser.storage.sync.get('ytSubtitle');
+    await browser.storage.sync.set({
+      ytSubtitle: { ...ytSubtitle, autoTranslate: enabled },
+    });
+  } catch (err) {
+    statusEl.textContent = '狀態:無法切換字幕翻譯,請重新整理頁面';
+    statusEl.style.color = '#ff3b30';
+  }
+});
+
+// commit 5c:雙語 toggle change handler(寫 ytSubtitle.bilingualMode 到 storage,YouTube
+// 跟 Drive 兩條路徑各自的 onChanged listener 自動反應;切換生效需 reload 影片頁)
+$('bilingual-toggle').addEventListener('change', async (e) => {
+  const bilingual = e.target.checked;
+  try {
+    const { ytSubtitle = {} } = await browser.storage.sync.get('ytSubtitle');
+    await browser.storage.sync.set({
+      ytSubtitle: { ...ytSubtitle, bilingualMode: bilingual },
+    });
+  } catch (err) {
+    statusEl.textContent = '狀態:無法切換雙語對照';
+    statusEl.style.color = '#ff3b30';
+  }
+});
+
 $('options-btn').addEventListener('click', () => {
   browser.runtime.openOptionsPage();
 });
@@ -305,11 +351,14 @@ $('options-btn').addEventListener('click', () => {
 // v1.6.23:popup 開著時 reactive sync ytSubtitle.autoTranslate(設定頁同步寫 storage 後立即反映)
 // popup 通常 click 外面就關閉,但 detached popup window 或極短時間視窗下這條 listener 確保一致
 browser.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'sync') return;
-  if (!changes.ytSubtitle) return;
+  if (area !== 'sync' || !changes.ytSubtitle) return;
   const newVal = changes.ytSubtitle.newValue || {};
-  // ytSubtitle.autoTranslate 預設視為 true(對齊 init 邏輯)
-  $('yt-subtitle-toggle').checked = newVal.autoTranslate !== false;
+  // 同一個 ytSubtitle.autoTranslate 設定同步兩個 popup toggle(YouTube + Drive 共用)
+  const enabled = newVal.autoTranslate !== false;
+  $('yt-subtitle-toggle').checked = enabled;
+  $('drive-subtitle-toggle').checked = enabled;
+  // commit 5c:bilingualMode 同步
+  $('bilingual-toggle').checked = newVal.bilingualMode === true;
 });
 
 // v1.0.3: 編輯譯文按鈕
