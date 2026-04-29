@@ -159,12 +159,21 @@
       // 術語表要穩定，不要有創意
       skipThreshold: 1,
       // ≤ 此批次數完全不建術語表
-      blockingThreshold: 5,
+      // v1.7.3: 預設從 5 提高到 10 — 中等長度頁面(6-10 批)走 fire-and-forget 不阻塞,
+      // 省下 EXTRACT_GLOSSARY 1.5-7.4 秒 blocking 等待;短頁本就跳過、長頁(>10 批)
+      // 仍 blocking 確保跨批次術語一致。使用者可在設定頁 0(永遠 fire-and-forget)
+      // ~ 50(極長頁才 blocking)區間調整。
+      blockingThreshold: 10,
       // > 此批次數則阻塞等術語表回來再翻譯
       timeoutMs: 6e4,
       // 術語表請求逾時（毫秒），超過則 fallback（v0.70: 60s）
-      maxTerms: 200
+      maxTerms: 200,
       // 術語表上限條目數
+      // v1.7.2: 術語表獨立模型。空字串表示「跟主翻譯同一個 model」(舊行為);
+      // 預設 'gemini-3.1-flash-lite-preview' — 術語抽取任務簡單,Flash Lite 比 Flash 快
+      // 1.5-3 倍且便宜 5 倍。實測啟用 glossary 時 EXTRACT_GLOSSARY 用 Flash 耗時
+      // 1.5-7.4 秒,改用 Flash Lite 預期可壓到 0.5-2.5 秒。
+      model: "gemini-3.1-flash-lite-preview"
     },
     domainRules: { whitelist: [] },
     autoTranslate: false,
@@ -201,7 +210,10 @@
       //   'progressive' = 混合模式(預設):先 heuristic 顯示(秒出),同時 LLM 跑覆蓋成更精緻版本。
       //                   兼顧速度與品質。toggle 開啟時用(預設)。
       //   'llm'         = 純 LLM 自由分句(內部保留,UI 不再可選)。
-      asrMode: "progressive"
+      asrMode: "progressive",
+      // commit 5c:雙語對照模式。預設 false=純中文(YouTube 既有行為:CSS 隱藏原生 CC;
+      // Drive 透過 postMessage unloadModule 關 player CC)。true=中英對照(原生 CC + 中文 overlay)
+      bilingualMode: false
     },
     // v0.35 新增：並行翻譯 rate limiter 設定
     // tier 對應 Gemini API 付費層級(free / tier1 / tier2),決定 RPM/TPM/RPD 上限
@@ -222,6 +234,14 @@
     // v1.0.1: 單頁翻譯段落數上限。超大頁面（如維基百科長條目）超過此上限時截斷。
     // 設為 0 表示不限制。
     maxTranslateUnits: 1e3,
+    // v1.8.3:「只翻文章開頭」節省模式。enabled=true 時只翻 batch 0(經 prioritizeUnits
+    // 推前的文章開頭 N 段),跳過 batch 1+,大幅減少 token 用量。使用者想看完整翻譯時
+    // 關閉此選項並重新翻譯,前面已翻好的段落會從本地快取自動命中(不重複收費)。
+    // maxUnits 範圍 5-50;chars 限制走內部 BATCH0_CHARS=3700 不暴露給使用者。
+    partialMode: {
+      enabled: false,
+      maxUnits: 25
+    },
     // v1.0.17: Toast 透明度（0.1–1.0），讓使用者在無限捲動網站上降低 toast 干擾
     toastOpacity: 0.7,
     // v1.1.3: Toast 自動關閉——翻譯完成/錯誤等 toast 在數秒後自動消失。
@@ -306,6 +326,26 @@
   };
   var API_KEY_STORAGE_KEY = "apiKey";
   var CUSTOM_PROVIDER_API_KEY = "customProviderApiKey";
+  var LEGACY_SYNC_KEYS = [
+    "ytPreserveLineBreaks",
+    // v1.2.38 移除(YouTube 字幕保留換行,改為永遠 true)
+    "preserveLineBreaks"
+    // 同上(全頁翻譯版本,更早期)
+  ];
+  var _legacyCleanupDone = false;
+  async function cleanupLegacySyncKeys() {
+    if (_legacyCleanupDone) return;
+    _legacyCleanupDone = true;
+    try {
+      const saved = await browser.storage.sync.get(LEGACY_SYNC_KEYS);
+      const present = LEGACY_SYNC_KEYS.filter((k) => k in saved);
+      if (present.length > 0) {
+        await browser.storage.sync.remove(present);
+      }
+    } catch {
+      _legacyCleanupDone = false;
+    }
+  }
   async function migrateApiKeyIfNeeded(syncSaved) {
     if (!syncSaved || typeof syncSaved.apiKey !== "string") return;
     const { [API_KEY_STORAGE_KEY]: localKey } = await browser.storage.local.get(API_KEY_STORAGE_KEY);
@@ -313,6 +353,25 @@
       await browser.storage.local.set({ [API_KEY_STORAGE_KEY]: syncSaved.apiKey });
     }
     await browser.storage.sync.remove("apiKey");
+  }
+  var _settingsCachePromise = null;
+  var _settingsCacheListenerBound = false;
+  function _bindSettingsCacheInvalidator() {
+    if (_settingsCacheListenerBound) return;
+    _settingsCacheListenerBound = true;
+    browser.storage.onChanged.addListener(() => {
+      _settingsCachePromise = null;
+    });
+  }
+  async function getSettingsCached() {
+    _bindSettingsCacheInvalidator();
+    if (!_settingsCachePromise) {
+      _settingsCachePromise = getSettings().catch((err) => {
+        _settingsCachePromise = null;
+        throw err;
+      });
+    }
+    return _settingsCachePromise;
   }
   async function getSettings() {
     const saved = await browser.storage.sync.get(null);
@@ -327,6 +386,8 @@
       glossary: { ...DEFAULT_SETTINGS.glossary, ...saved.glossary || {} },
       // v1.2.39: 深層 merge ytSubtitle，確保新欄位（model / pricing）有預設值
       ytSubtitle: { ...DEFAULT_SETTINGS.ytSubtitle, ...saved.ytSubtitle || {} },
+      // v1.8.3: partialMode 深層 merge,確保 maxUnits 預設值有 fallback
+      partialMode: { ...DEFAULT_SETTINGS.partialMode, ...saved.partialMode || {} },
       // v1.4.12: translatePresets——使用者自訂三組就完全以自訂為準（不做 per-slot merge），
       // 否則套用預設三組。陣列非空時視為使用者已自訂。
       translatePresets: Array.isArray(saved.translatePresets) && saved.translatePresets.length > 0 ? saved.translatePresets : DEFAULT_SETTINGS.translatePresets,
@@ -378,7 +439,7 @@
     logBuffer.push(entry);
     while (logBuffer.length > MAX_LOGS) logBuffer.shift();
     persistLog(entry);
-    getSettings().then((settings) => {
+    getSettingsCached().then((settings) => {
       if (settings.debugLog) {
         const tag = `[Shinkansen][${category}]`;
         if (level === "error") console.error(tag, message, data);
@@ -571,12 +632,12 @@
   async function extractGlossary(compressedText, settings) {
     const { apiKey, geminiConfig, glossary: glossaryConfig } = settings;
     const {
-      model,
       serviceTier,
       topP,
       topK,
       maxOutputTokens
     } = geminiConfig;
+    const model = (glossaryConfig?.model || "").trim() || geminiConfig.model;
     const glossaryPrompt = glossaryConfig?.prompt || "";
     const glossaryTemperature = glossaryConfig?.temperature ?? 0.1;
     const maxTerms = glossaryConfig?.maxTerms ?? 200;
@@ -872,6 +933,189 @@
       return { parts: aligned, usage: aggUsage, hadMismatch: true };
     }
     return { parts, usage: chunkUsage, hadMismatch: false };
+  }
+  async function translateBatchStream(texts, settings, glossary, fixedGlossary, forbiddenTerms, callbacks = {}, signal = void 0) {
+    if (!texts?.length) {
+      return { translations: [], usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 }, hadMismatch: false, finishReason: "STOP" };
+    }
+    const { apiKey, geminiConfig } = settings;
+    const { model, serviceTier, temperature, topP, topK, maxOutputTokens, systemInstruction } = geminiConfig;
+    const useSeqMarkers = texts.length > 1;
+    const markedTexts = useSeqMarkers ? texts.map((t, i) => `\xAB${i + 1}\xBB ${t}`) : texts;
+    const joined = markedTexts.join(DELIMITER);
+    const effectiveSystem = buildEffectiveSystemInstruction(systemInstruction, texts, joined, glossary, fixedGlossary, forbiddenTerms);
+    const body = {
+      contents: [{ role: "user", parts: [{ text: joined }] }],
+      systemInstruction: { parts: [{ text: effectiveSystem }] },
+      generationConfig: {
+        temperature,
+        topP,
+        topK,
+        maxOutputTokens,
+        thinkingConfig: pickThinkingConfig(model)
+      },
+      safetySettings: [
+        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+      ]
+    };
+    if (serviceTier && serviceTier !== "DEFAULT") body.service_tier = serviceTier.toLowerCase();
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
+    await debugLog("info", "api", "gemini stream request", {
+      model,
+      segments: texts.length,
+      chars: joined.length,
+      inputPreview: joined.slice(0, 200),
+      glossaryCount: glossary?.length || 0,
+      fixedGlossaryCount: fixedGlossary?.length || 0
+    });
+    const t0 = Date.now();
+    const SEQ_MARKER_RE = /^«\d+»\s*/;
+    let resp;
+    try {
+      resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal
+      });
+    } catch (err) {
+      if (signal?.aborted || err?.name === "AbortError") {
+        throw new Error("streaming aborted");
+      }
+      throw err;
+    }
+    if (!resp.ok) {
+      let errText = "";
+      try {
+        errText = await resp.text();
+      } catch (_) {
+      }
+      await debugLog("error", "api", "gemini stream HTTP error", { status: resp.status, error: errText.slice(0, 200) });
+      throw new Error(`Gemini API HTTP ${resp.status}${errText ? ": " + errText.slice(0, 200) : ""}`);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let allText = "";
+    let firstChunkFired = false;
+    let segmentsEmitted = 0;
+    let lastUsage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+    let finishReason = "unknown";
+    let blockReason = null;
+    function tryEmitSegments() {
+      if (!callbacks.onSegment) return;
+      const allParts = allText.split(DELIMITER);
+      const numComplete = allParts.length - 1;
+      while (segmentsEmitted < numComplete && segmentsEmitted < texts.length) {
+        const segText = allParts[segmentsEmitted].trim().replace(SEQ_MARKER_RE, "");
+        callbacks.onSegment(segmentsEmitted, segText, false);
+        segmentsEmitted++;
+      }
+    }
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!firstChunkFired) {
+          firstChunkFired = true;
+          try {
+            callbacks.onFirstChunk?.();
+          } catch (_) {
+          }
+        }
+        buffer += decoder.decode(value, { stream: true });
+        while (true) {
+          const m = buffer.match(/\r?\n\r?\n/);
+          if (!m) break;
+          const eventBlock = buffer.slice(0, m.index);
+          buffer = buffer.slice(m.index + m[0].length);
+          if (!eventBlock.startsWith("data: ")) continue;
+          const dataStr = eventBlock.slice(6);
+          let json;
+          try {
+            json = JSON.parse(dataStr);
+          } catch (_) {
+            continue;
+          }
+          const candidate = json?.candidates?.[0];
+          const partText = candidate?.content?.parts?.[0]?.text || "";
+          const fr = candidate?.finishReason;
+          if (fr) finishReason = fr;
+          if (json?.promptFeedback?.blockReason) blockReason = json.promptFeedback.blockReason;
+          if (partText) {
+            allText += partText;
+            tryEmitSegments();
+          }
+          const meta = json?.usageMetadata;
+          if (meta) {
+            lastUsage = {
+              inputTokens: meta.promptTokenCount || 0,
+              outputTokens: meta.candidatesTokenCount || 0,
+              cachedTokens: meta.cachedContentTokenCount || 0
+            };
+          }
+        }
+      }
+    } catch (err) {
+      if (signal?.aborted || err?.name === "AbortError") {
+        throw new Error("streaming aborted");
+      }
+      throw err;
+    } finally {
+      try {
+        reader.releaseLock?.();
+      } catch (_) {
+      }
+    }
+    const elapsed = Date.now() - t0;
+    if (callbacks.onSegment) {
+      const allParts = allText.split(DELIMITER);
+      while (segmentsEmitted < allParts.length && segmentsEmitted < texts.length) {
+        const segText = allParts[segmentsEmitted].trim().replace(SEQ_MARKER_RE, "");
+        callbacks.onSegment(segmentsEmitted, segText, false);
+        segmentsEmitted++;
+      }
+    }
+    await debugLog("info", "api", "gemini stream response", {
+      elapsed,
+      segments: texts.length,
+      segmentsEmitted,
+      inputTokens: lastUsage.inputTokens,
+      outputTokens: lastUsage.outputTokens,
+      cachedTokens: lastUsage.cachedTokens,
+      finishReason,
+      outputPreview: allText.slice(0, 300)
+    });
+    if (blockReason) {
+      throw new Error(`Gemini \u62D2\u7D55\u8655\u7406\u6B64\u8ACB\u6C42(promptFeedback.blockReason: ${blockReason})`);
+    }
+    if (allText.length === 0) {
+      const reasonMsg = {
+        SAFETY: "\u5167\u5BB9\u88AB Gemini \u5B89\u5168\u904E\u6FFE\u5668\u64CB\u4E0B",
+        RECITATION: "Gemini \u5075\u6E2C\u5230\u8F38\u51FA\u8207\u5DF2\u77E5\u4F5C\u54C1\u9AD8\u5EA6\u91CD\u8907(recitation filter)",
+        MAX_TOKENS: "\u8F38\u51FA\u8D85\u904E maxOutputTokens \u4E0A\u9650",
+        OTHER: "Gemini \u56DE\u50B3\u7A7A\u5167\u5BB9(finishReason: OTHER)"
+      };
+      throw new Error(reasonMsg[finishReason] || `Gemini \u56DE\u50B3\u7A7A\u5167\u5BB9(finishReason: ${finishReason})`);
+    }
+    const translations = allText.split(DELIMITER).map((s) => s.trim().replace(SEQ_MARKER_RE, ""));
+    const hadMismatch = translations.length !== texts.length;
+    if (hadMismatch) {
+      await debugLog("warn", "api", "gemini stream segment mismatch", {
+        expected: texts.length,
+        got: translations.length,
+        elapsed
+      });
+    }
+    return {
+      translations,
+      usage: lastUsage,
+      hadMismatch,
+      finishReason
+    };
   }
 
   // shinkansen/lib/openai-compat-thinking.js
@@ -1221,10 +1465,23 @@
     browser.storage.local.set(updates).catch(() => {
     });
   }
+  var _hashCache = /* @__PURE__ */ new Map();
+  var _HASH_CACHE_MAX = 500;
   async function hashText(text) {
+    const cached = _hashCache.get(text);
+    if (cached !== void 0) {
+      _hashCache.delete(text);
+      _hashCache.set(text, cached);
+      return cached;
+    }
     const buf = new TextEncoder().encode(text);
     const digest = await crypto.subtle.digest("SHA-1", buf);
-    return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    _hashCache.set(text, hex);
+    if (_hashCache.size > _HASH_CACHE_MAX) {
+      _hashCache.delete(_hashCache.keys().next().value);
+    }
+    return hex;
   }
   function estimateEntrySize(key, value) {
     const valStr = typeof value === "string" ? value : JSON.stringify(value);
@@ -1245,8 +1502,8 @@
     }
     return 0;
   }
-  async function evictOldest(targetBytes) {
-    const all = await browser.storage.local.get(null);
+  async function evictOldest(targetBytes, preFetchedAll = null) {
+    const all = preFetchedAll || await browser.storage.local.get(null);
     const cacheEntries = [];
     for (const [key, value] of Object.entries(all)) {
       if (key.startsWith(KEY_PREFIX) || key.startsWith(GLOSSARY_PREFIX)) {
@@ -1272,6 +1529,9 @@
     return { removed: toRemove.length, freedBytes: freed };
   }
   async function getCacheUsageBytes() {
+    if (typeof browser.storage.local.getBytesInUse === "function") {
+      return browser.storage.local.getBytesInUse(null);
+    }
     const all = await browser.storage.local.get(null);
     let bytes = 0;
     for (const [key, value] of Object.entries(all)) {
@@ -1438,6 +1698,7 @@
       this.updateLimits({ rpm, tpm, rpd, safetyMargin });
       this.requests = [];
       this.tokens = [];
+      this._tokenSum = 0;
       this.rpdDateKey = null;
       this.rpdCount = 0;
       this.rpdLoaded = false;
@@ -1520,12 +1781,13 @@
         this.requests.shift();
       }
       while (this.tokens.length && this.tokens[0].t < cutoff) {
+        this._tokenSum -= this.tokens[0].n;
         this.tokens.shift();
       }
     }
     /** 取得目前 60 秒視窗內累積的 token 數。 */
     currentTokenSum() {
-      return this.tokens.reduce((s, e) => s + e.n, 0);
+      return this._tokenSum;
     }
     /**
      * 等待並取得一個 slot。若任何維度超限則 sleep 到最近的釋放時間點再重試。
@@ -1555,6 +1817,7 @@
       const now = Date.now();
       this.requests.push(now);
       this.tokens.push({ t: now, n: estTokens });
+      this._tokenSum += estTokens;
       this.rpdCount += 1;
       this.scheduleRpdPersist();
       const rpdExceeded = this.rpdCount > this.rpdCap;
@@ -2095,6 +2358,7 @@
 
   // shinkansen/background.js
   debugLog("info", "system", "service worker started", { version: browser.runtime.getManifest().version });
+  cleanupLegacySyncKeys();
   var limiter = null;
   async function initLimiter() {
     const settings = await getSettings();
@@ -2266,12 +2530,116 @@
     stickyTabs.delete(tabId);
     await persistStickyTabs();
   });
+  async function _handleAsrSubtitleBatch(payload, sender, cacheTag, namespace) {
+    const _tReceived = Date.now();
+    const s = await getSettings();
+    const _settingsMs = Date.now() - _tReceived;
+    debugLog("info", namespace, "asr subtitle batch received", {
+      inputBytes: payload?.texts?.[0]?.length || 0,
+      settingsMs: _settingsMs
+    });
+    const yt = s.ytSubtitle || {};
+    const geminiOverrides = {
+      // ASR 模式不沿用使用者自訂的 ytSubtitle.systemPrompt(那是逐條翻譯版本,規則不適用 ASR JSON 模式)
+      systemInstruction: DEFAULT_ASR_SUBTITLE_SYSTEM_PROMPT,
+      // ASR 合句需要一點推理,但翻譯仍應穩定;沿用 ytSubtitle.temperature
+      temperature: yt.temperature ?? 0.1
+    };
+    if (yt.model) geminiOverrides.model = yt.model;
+    const pricingOverride = yt.pricing && yt.pricing.inputPerMTok != null ? yt.pricing : null;
+    return handleTranslate(
+      payload,
+      sender,
+      geminiOverrides,
+      pricingOverride,
+      cacheTag,
+      false,
+      false
+    );
+  }
   var messageHandlers = {
     TRANSLATE_BATCH: {
       async: true,
       handler: (payload, sender) => {
         const overrides = payload?.modelOverride ? { model: payload.modelOverride } : {};
         return handleTranslate(payload, sender, overrides);
+      }
+    },
+    // v1.8.0: Streaming 版翻譯,只給 content.js translateUnits 內 batch 0 用。
+    // async: false——立刻回 ack,fire-and-forget streaming;結果透過 tabs.sendMessage
+    // 推回 sender tab(STREAMING_FIRST_CHUNK / STREAMING_SEGMENT / STREAMING_DONE / STREAMING_ERROR / STREAMING_ABORTED)
+    TRANSLATE_BATCH_STREAM: {
+      async: false,
+      handler: (payload, sender) => {
+        const tabId = sender?.tab?.id;
+        if (!tabId) return { ok: false, error: "no tab" };
+        const streamId = payload?.streamId;
+        if (!streamId) return { ok: false, error: "no streamId" };
+        handleTranslateStream(payload, sender, streamId, tabId).catch((err) => {
+          debugLog("error", "system", "TRANSLATE_BATCH_STREAM uncaught", { streamId, error: err?.message || String(err) });
+          browser.tabs.sendMessage(tabId, {
+            type: "STREAMING_ERROR",
+            payload: { streamId, error: err?.message || String(err), atSegment: 0 }
+          }).catch(() => {
+          });
+        });
+        return { started: true };
+      }
+    },
+    // v1.8.9: Streaming 版人工字幕 batch 0 翻譯。
+    // 跟 TRANSLATE_BATCH_STREAM 共用同一條 streaming pipeline(handleTranslateStream),
+    // 但帶 ytSubtitle.systemPrompt / temperature / model / pricing,cacheTag '_yt',
+    // 預設不套用固定術語表 / 黑名單(跟 TRANSLATE_SUBTITLE_BATCH 對齊)。
+    TRANSLATE_SUBTITLE_BATCH_STREAM: {
+      async: false,
+      handler: (payload, sender) => {
+        const tabId = sender?.tab?.id;
+        if (!tabId) return { ok: false, error: "no tab" };
+        const streamId = payload?.streamId;
+        if (!streamId) return { ok: false, error: "no streamId" };
+        (async () => {
+          const s = await getSettings();
+          const yt = s.ytSubtitle || {};
+          const geminiOverrides = {
+            systemInstruction: yt.systemPrompt || DEFAULT_SUBTITLE_SYSTEM_PROMPT,
+            temperature: yt.temperature ?? 0.1
+          };
+          if (yt.model) geminiOverrides.model = yt.model;
+          const pricingOverride = yt.pricing && yt.pricing.inputPerMTok != null ? yt.pricing : null;
+          await handleTranslateStream(payload, sender, streamId, tabId, {
+            cacheTag: "_yt",
+            geminiOverrides,
+            pricingOverride,
+            applyFixedGlossary: yt.applyFixedGlossary === true,
+            applyForbiddenTerms: yt.applyForbiddenTerms === true
+          });
+        })().catch((err) => {
+          debugLog("error", "system", "TRANSLATE_SUBTITLE_BATCH_STREAM uncaught", { streamId, error: err?.message || String(err) });
+          browser.tabs.sendMessage(tabId, {
+            type: "STREAMING_ERROR",
+            payload: { streamId, error: err?.message || String(err), atSegment: 0 }
+          }).catch(() => {
+          });
+        });
+        return { started: true };
+      }
+    },
+    // v1.8.0: 中斷 in-flight streaming(使用者取消翻譯時觸發)
+    STREAMING_ABORT: {
+      async: false,
+      handler: (payload) => {
+        const streamId = payload?.streamId;
+        if (!streamId) return { aborted: false };
+        const ac = inFlightStreams.get(streamId);
+        if (ac) {
+          try {
+            ac.abort();
+          } catch (_) {
+          }
+          inFlightStreams.delete(streamId);
+          return { aborted: true };
+        }
+        return { aborted: false };
       }
     },
     // v1.2.10: 字幕翻譯專用——prompt / temperature / model 從 ytSubtitle 設定讀取（v1.2.11 改為動態載入）
@@ -2314,38 +2682,68 @@
     //   - 字幕 settings 沿用 ytSubtitle(model / temperature / pricing),只覆寫 systemInstruction
     TRANSLATE_ASR_SUBTITLE_BATCH: {
       async: true,
+      handler: (payload, sender) => _handleAsrSubtitleBatch(payload, sender, "_yt_asr", "youtube")
+    },
+    // commit 4a:Drive 影片 ASR 字幕走獨立 cache key('_drive_yt_asr')避免污染 YouTube
+    // 既有 cache。LLM prompt / pricing / 設定全部沿用 ytSubtitle(D' 模式跟 YouTube 一致)。
+    TRANSLATE_DRIVE_ASR_SUBTITLE_BATCH: {
+      async: true,
+      handler: (payload, sender) => _handleAsrSubtitleBatch(payload, sender, "_drive_yt_asr", "drive")
+    },
+    // Drive 影片 ASR 字幕 URL 偵測——iframe(youtube.googleapis.com/embed)的
+    // content-drive-iframe.js 用 PerformanceObserver 抓到 timedtext URL 後送來。
+    // 為什麼 background fetch 而不直接 iframe fetch:iframe 內 fetch 會被 PerformanceObserver
+    // 重新捕捉造成 loop;且 background 跟 iframe 不同 origin,但 authpayload 自含 auth(已驗
+    // credentials:'omit' 也 200),background 直接 refetch 即可。
+    // 拿到 json3 後 relay 到 top frame(drive.google.com)的 content-script(commit 2 接手處理)。
+    DRIVE_TIMEDTEXT_URL: {
+      async: true,
       handler: async (payload, sender) => {
-        const _tReceived = Date.now();
-        const s = await getSettings();
-        const _settingsMs = Date.now() - _tReceived;
-        debugLog("info", "youtube", "asr subtitle batch received", {
-          inputBytes: payload?.texts?.[0]?.length || 0,
-          settingsMs: _settingsMs
+        const url = payload?.url;
+        if (!url || !sender?.tab?.id) return { ok: false, error: "invalid payload" };
+        debugLog("info", "drive", "timedtext url received from iframe", {
+          tabId: sender.tab.id,
+          frameId: sender.frameId,
+          url: url.slice(0, 200)
         });
-        const yt = s.ytSubtitle || {};
-        const geminiOverrides = {
-          // ASR 模式不沿用使用者自訂的 ytSubtitle.systemPrompt(那是逐條翻譯版本,規則不適用 ASR JSON 模式)
-          systemInstruction: DEFAULT_ASR_SUBTITLE_SYSTEM_PROMPT,
-          // ASR 合句需要一點推理,但翻譯仍應穩定;沿用 ytSubtitle.temperature
-          temperature: yt.temperature ?? 0.1
-        };
-        if (yt.model) geminiOverrides.model = yt.model;
-        const pricingOverride = yt.pricing && yt.pricing.inputPerMTok != null ? yt.pricing : null;
-        return handleTranslate(
-          payload,
-          sender,
-          geminiOverrides,
-          pricingOverride,
-          "_yt_asr",
-          false,
-          false
-        );
+        try {
+          const res = await fetch(url, { credentials: "omit" });
+          if (!res.ok) {
+            debugLog("warn", "drive", "timedtext fetch failed", { status: res.status });
+            return { ok: false, error: `http ${res.status}` };
+          }
+          const json3 = await res.json();
+          debugLog("info", "drive", "timedtext fetched", {
+            eventCount: Array.isArray(json3?.events) ? json3.events.length : 0
+          });
+          try {
+            await browser.tabs.sendMessage(
+              sender.tab.id,
+              { type: "DRIVE_ASR_CAPTIONS", payload: { url, json3 } },
+              { frameId: 0 }
+            );
+          } catch (e) {
+            debugLog("info", "drive", "top frame relay no listener (expected pre-commit-2)", {
+              error: e?.message || String(e)
+            });
+          }
+          return { ok: true };
+        } catch (e) {
+          debugLog("warn", "drive", "timedtext handler error", { error: e?.message || String(e) });
+          return { ok: false, error: e?.message || String(e) };
+        }
       }
     },
     // v1.4.0: Google Translate 網頁翻譯（不需 API Key，不走 rate limiter，快取 key 用 _gt 後綴）
     TRANSLATE_BATCH_GOOGLE: {
       async: true,
       handler: (payload, sender) => handleTranslateGoogle(payload, sender, "_gt")
+    },
+    // commit 5b:Drive 影片字幕走 Google Translate 路徑(獨立 cache key '_gt_drive' 避免跟
+    // 一般網頁 GT 翻譯('_gt')互打)。input texts = raw segments 的 text array,逐段翻。
+    TRANSLATE_DRIVE_BATCH_GOOGLE: {
+      async: true,
+      handler: (payload, sender) => handleTranslateGoogle(payload, sender, "_gt_drive")
     },
     // v1.5.7: OpenAI-compatible 自訂 Provider 翻譯（chat.completions endpoint）
     // 不走 rate limiter，cache key 加 baseUrl hash + model 分區。
@@ -2558,7 +2956,7 @@
     LOG_USAGE: {
       async: true,
       handler: async (payload) => {
-        const settings = await getSettings();
+        const settings = await getSettingsCached();
         let resolvedModel;
         if (payload.engine === "openai-compat") {
           resolvedModel = settings.customProvider?.model || "unknown";
@@ -2619,6 +3017,212 @@
       return false;
     }
   });
+  var inFlightStreams = /* @__PURE__ */ new Map();
+  var _streamKeepAliveTimer = null;
+  function _startStreamKeepAlive() {
+    if (_streamKeepAliveTimer) return;
+    _streamKeepAliveTimer = setInterval(() => {
+      browser.runtime.getPlatformInfo().catch(() => {
+      });
+    }, 2e4);
+  }
+  function _stopStreamKeepAliveIfIdle() {
+    if (inFlightStreams.size === 0 && _streamKeepAliveTimer) {
+      clearInterval(_streamKeepAliveTimer);
+      _streamKeepAliveTimer = null;
+    }
+  }
+  async function handleTranslateStream(payload, sender, streamId, tabId, opts = {}) {
+    const {
+      cacheTag = "",
+      geminiOverrides = {},
+      pricingOverride = null,
+      applyFixedGlossary = true,
+      applyForbiddenTerms = true
+    } = opts;
+    const settings = await getSettings();
+    if (!settings.apiKey) {
+      browser.tabs.sendMessage(tabId, {
+        type: "STREAMING_ERROR",
+        payload: { streamId, error: "\u5C1A\u672A\u8A2D\u5B9A Gemini API Key,\u8ACB\u81F3\u8A2D\u5B9A\u9801\u586B\u5165\u3002", atSegment: 0 }
+      }).catch(() => {
+      });
+      return;
+    }
+    const texts = payload?.texts || [];
+    if (!texts.length) {
+      browser.tabs.sendMessage(tabId, {
+        type: "STREAMING_DONE",
+        payload: { streamId, usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, billedInputTokens: 0, billedCostUSD: 0 }, totalSegments: 0, hadMismatch: false, finishReason: "STOP" }
+      }).catch(() => {
+      });
+      return;
+    }
+    const overrides = { ...geminiOverrides };
+    if (payload?.modelOverride) overrides.model = payload.modelOverride;
+    const effectiveSettings = Object.keys(overrides).length > 0 ? { ...settings, geminiConfig: { ...settings.geminiConfig, ...overrides } } : settings;
+    let effectivePricing = pricingOverride;
+    if (!effectivePricing && overrides.model) effectivePricing = getPricingForModel(overrides.model, settings);
+    if (!effectivePricing) effectivePricing = settings.pricing;
+    let fixedGlossaryEntries = null;
+    const fg = applyFixedGlossary ? settings.fixedGlossary : null;
+    if (fg) {
+      const globalEntries = Array.isArray(fg.global) ? fg.global.filter((e) => e.source && e.target) : [];
+      let domainEntries = [];
+      if (fg.byDomain && sender?.tab?.url) {
+        try {
+          const hostname = new URL(sender.tab.url).hostname;
+          domainEntries = Array.isArray(fg.byDomain[hostname]) ? fg.byDomain[hostname].filter((e) => e.source && e.target) : [];
+        } catch {
+        }
+      }
+      if (globalEntries.length || domainEntries.length) {
+        fixedGlossaryEntries = [...globalEntries, ...domainEntries];
+      }
+    }
+    const forbiddenTermsList = applyForbiddenTerms && Array.isArray(settings.forbiddenTerms) ? settings.forbiddenTerms : [];
+    let cacheKeySuffix = cacheTag;
+    const glossary = payload?.glossary || null;
+    const allGlossaryForHash = [
+      ...(glossary || []).map((e) => `${e.source}:${e.target}`),
+      ...(fixedGlossaryEntries || []).map((e) => `F:${e.source}:${e.target}`)
+    ];
+    if (allGlossaryForHash.length > 0) {
+      const fullHash = await hashText(allGlossaryForHash.join("|"));
+      cacheKeySuffix = "_g" + fullHash.slice(0, 12);
+    }
+    const forbiddenHash = await hashForbiddenTerms(forbiddenTermsList);
+    if (forbiddenHash) cacheKeySuffix += "_b" + forbiddenHash;
+    const modelStr = effectiveSettings.geminiConfig?.model || "unknown";
+    cacheKeySuffix += "_m" + modelStr.replace(/[^a-z0-9.\-]/gi, "_");
+    const cached = await getBatch(texts, cacheKeySuffix);
+    const allHit = cached.every((tr) => tr != null);
+    const cacheHits = cached.filter((tr) => tr != null).length;
+    debugLog("info", "cache", "streaming batch cache lookup", {
+      streamId,
+      total: texts.length,
+      hits: cacheHits,
+      misses: texts.length - cacheHits,
+      allHit
+    });
+    if (allHit) {
+      inFlightStreams.delete(streamId);
+      _stopStreamKeepAliveIfIdle();
+      browser.tabs.sendMessage(tabId, { type: "STREAMING_FIRST_CHUNK", payload: { streamId } }).catch(() => {
+      });
+      for (let i = 0; i < cached.length; i++) {
+        browser.tabs.sendMessage(tabId, {
+          type: "STREAMING_SEGMENT",
+          payload: { streamId, segmentIdx: i, translation: cached[i] }
+        }).catch(() => {
+        });
+      }
+      browser.tabs.sendMessage(tabId, {
+        type: "STREAMING_DONE",
+        payload: {
+          streamId,
+          usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, billedInputTokens: 0, billedCostUSD: 0, cacheHits: texts.length },
+          totalSegments: cached.length,
+          hadMismatch: false,
+          finishReason: "STOP"
+        }
+      }).catch(() => {
+      });
+      return;
+    }
+    const ac = new AbortController();
+    inFlightStreams.set(streamId, ac);
+    _startStreamKeepAlive();
+    let firstChunkSent = false;
+    const onFirstChunk = () => {
+      if (firstChunkSent) return;
+      firstChunkSent = true;
+      browser.tabs.sendMessage(tabId, {
+        type: "STREAMING_FIRST_CHUNK",
+        payload: { streamId }
+      }).catch(() => {
+      });
+    };
+    const onSegment = (idx, translation, _hadMismatch) => {
+      browser.tabs.sendMessage(tabId, {
+        type: "STREAMING_SEGMENT",
+        payload: { streamId, segmentIdx: idx, translation }
+      }).catch(() => {
+      });
+    };
+    try {
+      const result = await translateBatchStream(
+        texts,
+        effectiveSettings,
+        glossary,
+        fixedGlossaryEntries,
+        forbiddenTermsList.length > 0 ? forbiddenTermsList : null,
+        { onFirstChunk, onSegment },
+        ac.signal
+      );
+      if (result.translations && result.translations.length > 0) {
+        const writableTexts = [];
+        const writableTranslations = [];
+        for (let i = 0; i < texts.length && i < result.translations.length; i++) {
+          if (result.translations[i]) {
+            writableTexts.push(texts[i]);
+            writableTranslations.push(result.translations[i]);
+          }
+        }
+        if (writableTexts.length > 0) {
+          await setBatch(writableTexts, writableTranslations, cacheKeySuffix);
+          debugLog("info", "cache", "streaming batch cache write", {
+            streamId,
+            written: writableTexts.length
+          });
+        }
+      }
+      const billedInputTokens = Math.max(
+        0,
+        Math.round(result.usage.inputTokens - (result.usage.cachedTokens || 0) * 0.75)
+      );
+      const billedCostUSD = computeBilledCostUSD(
+        result.usage.inputTokens,
+        result.usage.cachedTokens || 0,
+        result.usage.outputTokens,
+        effectivePricing
+      );
+      await addUsage(billedInputTokens, result.usage.outputTokens, billedCostUSD);
+      browser.tabs.sendMessage(tabId, {
+        type: "STREAMING_DONE",
+        payload: {
+          streamId,
+          usage: {
+            ...result.usage,
+            billedInputTokens,
+            billedCostUSD
+          },
+          totalSegments: result.translations.length,
+          hadMismatch: result.hadMismatch,
+          finishReason: result.finishReason
+        }
+      }).catch(() => {
+      });
+    } catch (err) {
+      if (ac.signal.aborted || /aborted/i.test(err?.message || "")) {
+        browser.tabs.sendMessage(tabId, {
+          type: "STREAMING_ABORTED",
+          payload: { streamId }
+        }).catch(() => {
+        });
+      } else {
+        debugLog("error", "api", "streaming translateBatch failed", { streamId, error: err?.message || String(err) });
+        browser.tabs.sendMessage(tabId, {
+          type: "STREAMING_ERROR",
+          payload: { streamId, error: err?.message || String(err), atSegment: 0 }
+        }).catch(() => {
+        });
+      }
+    } finally {
+      inFlightStreams.delete(streamId);
+      _stopStreamKeepAliveIfIdle();
+    }
+  }
   async function handleTranslate(payload, sender, geminiOverrides = {}, pricingOverride = null, cacheTag = "", applyFixedGlossary = true, applyForbiddenTerms = true) {
     const settings = await getSettings();
     if (!settings.apiKey) {
@@ -3040,11 +3644,13 @@
         0,
         Math.round(usage.inputTokens - (usage.cachedTokens || 0) * 0.75)
       );
+      const glossaryModel = (settings.glossary?.model || "").trim() || settings.geminiConfig?.model;
+      const glossaryPricing = getPricingForModel(glossaryModel, settings) || settings.pricing;
       const billedCost = computeBilledCostUSD(
         usage.inputTokens,
         usage.cachedTokens || 0,
         usage.outputTokens,
-        settings.pricing
+        glossaryPricing
       );
       await addUsage(billedInput, usage.outputTokens, billedCost);
     }
