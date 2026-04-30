@@ -78,13 +78,13 @@ async function refreshTranslateButton() {
 
 async function refreshShortcutHint() {
   // v1.4.13: popup 按鈕觸發 TOGGLE_TRANSLATE 訊息，content.js 將其映射為 preset slot 2（Flash）。
-  // 所以這裡讀 translate-preset-2 的當前鍵位顯示。
-  // （v1.4.12 前舊名 toggle-translate 已移除，改讀新名稱避免永遠顯示「未設定」）
+  // 所以這裡讀「主要預設」的當前鍵位顯示。
+  // v1.8.19: 主要預設 command id 改為 translate-preset-0(字典序保證 chrome://extensions/shortcuts 顯示在最上)
   const el = $('shortcut-hint');
   if (!el) return;
   try {
     const cmds = await browser.commands.getAll();
-    const cmd = cmds.find((c) => c.name === 'translate-preset-2');
+    const cmd = cmds.find((c) => c.name === 'translate-preset-0');
     const shortcut = cmd?.shortcut?.trim();
     if (shortcut) {
       el.textContent = `${shortcut} 快速切換`;
@@ -154,6 +154,8 @@ async function init() {
       $('update-dot').hidden = false;
       $('welcome-banner').hidden = false;
       $('welcome-banner-title').textContent = `🎉 已升級至 v${welcomeNotice.version}`;
+      // AMO source review: RELEASE_HIGHLIGHTS 是 dev hardcoded 字串陣列(見 lib/release-highlights.js),
+      // highlightToHtml 是同檔案內的安全 markdown-to-html 轉換(只處理 **bold** → <strong>),無 user input。
       $('welcome-bullets').innerHTML = RELEASE_HIGHLIGHTS
         .map(h => `<li>${highlightToHtml(h)}</li>`)
         .join('');
@@ -236,9 +238,14 @@ async function init() {
 }
 
 $('translate-btn').addEventListener('click', async () => {
+  // v1.8.20: 雙擊防護——點擊期間 disable 按鈕,避免快速連按兩次導致第二次被
+  // content.js 解讀為 abort/restore(toggle 行為)
+  const btn = $('translate-btn');
+  if (btn.disabled) return;
+  btn.disabled = true;
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return;
-  const mode = $('translate-btn').dataset.mode;
+  if (!tab?.id) { btn.disabled = false; return; }
+  const mode = btn.dataset.mode;
   statusEl.textContent = mode === 'restore' ? '狀態：正在還原原文…' : '狀態：正在翻譯…';
   try {
     // v1.6.6: 讀 settings.popupButtonSlot 決定按鈕對應的 preset slot（預設 2 = Flash）
@@ -250,6 +257,7 @@ $('translate-btn').addEventListener('click', async () => {
   } catch (err) {
     statusEl.textContent = '狀態：無法在此頁面執行，請重新整理後再試';
     statusEl.style.color = '#ff3b30';
+    btn.disabled = false;
   }
 });
 

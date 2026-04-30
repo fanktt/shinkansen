@@ -156,6 +156,23 @@
     }
   }
 
+  // v1.8.16: 螢幕上若已有中文字幕(ASR overlay 命中當前 cue / 非 ASR DOM segment
+  // 已替換成中文),不顯示「翻譯中…」避免覆蓋實質內容打擾使用者。
+  function _hasVisibleChineseCaption() {
+    const YT = SK.YT;
+    if (YT.isAsr) {
+      const video = document.querySelector('video');
+      const currentMs = video ? Math.floor(video.currentTime * 1000) : 0;
+      const cue = _findActiveCue(currentMs);
+      return !!(cue && cue.text && /[一-鿿]/.test(cue.text));
+    }
+    const segs = document.querySelectorAll('.ytp-caption-segment');
+    for (const s of segs) {
+      if (/[一-鿿]/.test(s.textContent || '')) return true;
+    }
+    return false;
+  }
+
   function showCaptionStatus(text) {
     // commit 5c.3:雙語模式不顯示「翻譯中…」status — 原生英文 CC 已經給 user
     // feedback,中文 overlay 也會在 LLM 回後顯示,status indicator 多餘且會夾在
@@ -250,6 +267,166 @@
     //   整句進整句出,不依賴 YouTube 原生 caption-segment(避免 ASR 一字一字跳)。
     displayCues:              [],
   };
+
+  // ─── 無邊模式（隱藏功能,經 chrome.commands 快速鍵 toggle）───────
+  // 隱藏 YouTube UI、強制 theatre、撐滿視窗,並透過 background 把視窗高度
+  // resize 成匹配 video aspect ratio。無預設快速鍵,使用者於
+  // chrome://extensions/shortcuts 自行綁定。
+  SK.YT.Borderless = (() => {
+    const STYLE_ID = 'sk-yt-borderless';
+    const CSS_TEXT = `
+      #masthead-container,ytd-masthead,#secondary,#secondary-inner,
+      ytd-watch-metadata,#below,#comments,#related,#chat,
+      ytd-merch-shelf-renderer,ytd-engagement-panel-section-list-renderer{display:none!important}
+      html,body{margin:0!important;padding:0!important;background:#000!important;overflow:hidden!important;height:100%!important;width:100%!important}
+      ytd-app,#content,ytd-page-manager,ytd-watch-flexy,#primary,#primary-inner,#columns{
+        height:100%!important;width:100%!important;margin:0!important;padding:0!important;max-width:none!important
+      }
+      ytd-watch-flexy[theater] #full-bleed-container,
+      #full-bleed-container,#player-theater-container,#player-full-bleed-container,
+      #player-container-outer,#player-container,#player-container-inner,
+      #movie_player,#ytd-player,ytd-player,.html5-video-player,
+      .html5-video-container{
+        width:100vw!important;max-width:none!important;
+        height:100vh!important;max-height:none!important;
+        min-height:100vh!important;
+        position:relative!important;top:0!important;left:0!important
+      }
+      video.html5-main-video,video.video-stream{
+        width:100vw!important;height:100vh!important;
+        max-width:none!important;max-height:none!important;
+        object-fit:contain!important;
+        top:0!important;left:0!important
+      }
+    `;
+
+    let active = false;
+    // null = 尚未 snapshot;true/false = 啟用前 ytd-watch-flexy 是否已有 theater attribute。
+    // 只有「原本沒有 theater」才在 toggle off 時 removeAttribute,避免使用者本來就在
+    // 劇院模式時被誤關。
+    let prevTheaterValue = null;
+    let pendingLoadedHandler = null;
+
+    function injectStyle() {
+      if (document.getElementById(STYLE_ID)) return;
+      const s = document.createElement('style');
+      s.id = STYLE_ID;
+      s.textContent = CSS_TEXT;
+      (document.head || document.documentElement).appendChild(s);
+    }
+
+    function removeStyle() {
+      document.getElementById(STYLE_ID)?.remove();
+    }
+
+    function snapshotAndSetTheater() {
+      const wf = document.querySelector('ytd-watch-flexy');
+      if (!wf) return;
+      if (prevTheaterValue === null) prevTheaterValue = wf.hasAttribute('theater');
+      if (!wf.hasAttribute('theater')) wf.setAttribute('theater', '');
+    }
+
+    function restoreTheater() {
+      const wf = document.querySelector('ytd-watch-flexy');
+      if (wf && prevTheaterValue === false) wf.removeAttribute('theater');
+      prevTheaterValue = null;
+    }
+
+    function applyVideoInline() {
+      const v = document.querySelector('video.html5-main-video');
+      if (!v) return;
+      v.style.setProperty('width', '100vw', 'important');
+      v.style.setProperty('height', '100vh', 'important');
+      v.style.setProperty('top', '0', 'important');
+      v.style.setProperty('left', '0', 'important');
+      v.style.setProperty('object-fit', 'contain', 'important');
+    }
+
+    function clearVideoInline() {
+      const v = document.querySelector('video.html5-main-video');
+      if (!v) return;
+      ['width', 'height', 'top', 'left', 'object-fit'].forEach(p => v.style.removeProperty(p));
+    }
+
+    function calcTargetWindowHeight(videoW, videoH, innerW, outerH, innerH) {
+      const ratio = videoW / videoH;
+      const targetInner = Math.round(innerW / ratio);
+      const chromeH = Math.max(0, outerH - innerH);
+      const minOuter = 200;
+      const maxOuter = Math.round((screen.availHeight || 1080) * 0.8);
+      return Math.max(minOuter, Math.min(maxOuter, targetInner + chromeH));
+    }
+
+    function requestResize() {
+      const v = document.querySelector('video.html5-main-video');
+      if (!v) return;
+      if (!v.videoWidth || !v.videoHeight) {
+        if (pendingLoadedHandler) v.removeEventListener('loadedmetadata', pendingLoadedHandler);
+        pendingLoadedHandler = () => {
+          pendingLoadedHandler = null;
+          if (active) requestResize();
+        };
+        v.addEventListener('loadedmetadata', pendingLoadedHandler, { once: true });
+        return;
+      }
+      const target = calcTargetWindowHeight(
+        v.videoWidth, v.videoHeight,
+        window.innerWidth, window.outerHeight, window.innerHeight,
+      );
+      try {
+        browser.runtime.sendMessage({ type: 'RESIZE_OWN_WINDOW', payload: { height: target } })
+          .catch(() => {});
+      } catch (_) {}
+    }
+
+    function apply() {
+      injectStyle();
+      snapshotAndSetTheater();
+      applyVideoInline();
+      // YouTube player JS 監聽 resize 重算 video inline width/height,給三個時機確保 settle
+      window.dispatchEvent(new Event('resize'));
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 200);
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 600);
+      setTimeout(() => requestResize(), 300);
+    }
+
+    function unapply() {
+      removeStyle();
+      restoreTheater();
+      clearVideoInline();
+      if (pendingLoadedHandler) {
+        const v = document.querySelector('video.html5-main-video');
+        v?.removeEventListener('loadedmetadata', pendingLoadedHandler);
+        pendingLoadedHandler = null;
+      }
+      window.dispatchEvent(new Event('resize'));
+    }
+
+    function toggle() {
+      if (!SK.isYouTubePage?.()) return; // 非 watch 頁 → 沉默 no-op
+      active = !active;
+      if (active) apply();
+      else unapply();
+    }
+
+    function reapplyOnNavigation() {
+      if (!active) return;
+      if (SK.isYouTubePage?.()) {
+        setTimeout(() => { if (active) apply(); }, 500);
+      } else {
+        // SPA 切到非 watch 頁(例如首頁)→ 撤掉 CSS 但保留 active flag,
+        // 切回 watch 頁時自動重套
+        removeStyle();
+        clearVideoInline();
+        prevTheaterValue = null;
+      }
+    }
+
+    function isActive() { return active; }
+
+    // _calcTargetWindowHeight 暴露給 spec 驗 aspect 計算純函式
+    return { toggle, reapplyOnNavigation, isActive, _calcTargetWindowHeight: calcTargetWindowHeight };
+  })();
 
   // ─── 工具 ──────────────────────────────────────────────────
 
@@ -386,7 +563,7 @@
       const windowSizeMs = (config.windowSizeS || 30) * 1000;
       const windowStartMs = Math.floor(currentMs / windowSizeMs) * windowSizeMs;
       _debugUpdate(`XHR 攔截 ${segments.length} 條字幕（至 ${Math.round(lastMs / 1000)}s），開始翻譯`);
-      showCaptionStatus('翻譯中…');
+      if (!_hasVisibleChineseCaption()) showCaptionStatus('翻譯中…');
       translateWindowFrom(windowStartMs);
     }
   });
@@ -787,6 +964,8 @@
       // 有切點:用 innerHTML + <br>(textContent 走不出 <br>,設 \n 也會被
       // YouTube 既有 white-space: nowrap 吞掉)。先 escape 防 XSS。
       const html = _escapeHtml(wrapped).replace(/\n/g, '<br>');
+      // AMO source review: html = _escapeHtml(text) + 自家加入的 <br>。原文已 escape,
+      // <br> 是 dev 自己控的 literal,無 user input 流入。
       if (el.innerHTML !== html) el.innerHTML = html;
     } else {
       if (el.textContent !== wrapped) el.textContent = wrapped;
@@ -810,6 +989,7 @@
     // 用 innerHTML + <br> 寫入(比 textContent + \n + white-space:pre-wrap 更穩定,
     // 不受 inline-block 的 wrap 行為差異影響)。先 escape HTML 字元防注入。
     const html = _escapeHtml(wrapped).replace(/\n/g, '<br>');
+    // AMO source review: html = _escapeHtml(text) + 自家 <br>,user input 已 escape。
     if (tgtEl.innerHTML !== html) tgtEl.innerHTML = html;
     // source 暫不顯示(避免跟原生 ASR caption 三層字幕重疊;之後可加 toggle)
     if (sourceText !== undefined && srcEl) srcEl.hidden = true;
@@ -830,43 +1010,50 @@
   // 用 class + 全域 style 而非 inline style:避免每個 caption-window 個別處理 mutation 競爭。
   const _ASR_PLAYER_CLASS = 'shinkansen-asr-active';
   const _ASR_HIDE_CSS_ID  = 'shinkansen-asr-hide-css';
+  // v1.8.16:stylesheet 注入從 _setAsrHidingMode 抽出獨立 helper,
+  // bilingual=true 也走「不隱藏原生 CC + overlay 上抬 90px」的 CSS rule(host[bilingual]),
+  // 這條 rule 必須跟 .ytp-autohide 規則同份 stylesheet 一起注入,reload 後直接進雙語
+  // (從沒走過 active=true 分支)否則拿不到 90px 上抬,中英 CC 重疊在原生 30px 高度。
+  function _ensureAsrStylesheet() {
+    if (document.getElementById(_ASR_HIDE_CSS_ID)) return;
+    const style = document.createElement('style');
+    style.id = _ASR_HIDE_CSS_ID;
+    // 用 visibility/opacity 隱藏(而非 display:none),保留 layout —— 我們需要讀
+    // .ytp-caption-segment 的 computed font-size 當作 overlay 字體基準。
+    // pointer-events:none 避免使用者誤點(雖然 absolute positioned 沒互動性)。
+    style.textContent = `
+      .${_ASR_PLAYER_CLASS} .caption-window,
+      .${_ASR_PLAYER_CLASS} .ytp-caption-window-rollup,
+      .${_ASR_PLAYER_CLASS} .ytp-caption-window-container .caption-window {
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      /* 控制列(chrome)顯示時讓 overlay 上移避開進度條:
+         YouTube 在 chrome 隱藏時加 .ytp-autohide 到 .html5-video-player,顯示時移除。
+         :not(.ytp-autohide) 命中代表 chrome 顯示中,把 CSS variable 推給 host element,
+         shadow DOM 內 .window 透過 var() 自動繼承 → bottom 從預設 30px 改為 60px。 */
+      .html5-video-player:not(.ytp-autohide) ${_OVERLAY_TAG} {
+        --sk-cue-bottom: calc(60px + var(--sk-cue-size, 22px));
+      }
+      /* commit 5c.6:雙語模式(host[bilingual] attr)overlay 從預設 30px 推到 90px
+         避開原生英文 CC(原生 30-40px from bottom)。chrome 顯示時再多推一段
+         避開控制列 + 已上抬的原生 CC(YouTube 自己把原生 CC 推到約 82px)。 */
+      ${_OVERLAY_TAG}[bilingual] {
+        --sk-cue-bottom: 90px;
+      }
+      .html5-video-player:not(.ytp-autohide) ${_OVERLAY_TAG}[bilingual] {
+        --sk-cue-bottom: calc(140px + var(--sk-cue-size, 22px));
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
   function _setAsrHidingMode(active) {
     const root = _getPlayerRoot();
     if (!root) return;
+    _ensureAsrStylesheet();
     if (active) {
-      if (!document.getElementById(_ASR_HIDE_CSS_ID)) {
-        const style = document.createElement('style');
-        style.id = _ASR_HIDE_CSS_ID;
-        // 用 visibility/opacity 隱藏(而非 display:none),保留 layout —— 我們需要讀
-        // .ytp-caption-segment 的 computed font-size 當作 overlay 字體基準。
-        // pointer-events:none 避免使用者誤點(雖然 absolute positioned 沒互動性)。
-        style.textContent = `
-          .${_ASR_PLAYER_CLASS} .caption-window,
-          .${_ASR_PLAYER_CLASS} .ytp-caption-window-rollup,
-          .${_ASR_PLAYER_CLASS} .ytp-caption-window-container .caption-window {
-            visibility: hidden !important;
-            opacity: 0 !important;
-            pointer-events: none !important;
-          }
-          /* 控制列(chrome)顯示時讓 overlay 上移避開進度條:
-             YouTube 在 chrome 隱藏時加 .ytp-autohide 到 .html5-video-player,顯示時移除。
-             :not(.ytp-autohide) 命中代表 chrome 顯示中,把 CSS variable 推給 host element,
-             shadow DOM 內 .window 透過 var() 自動繼承 → bottom 從預設 30px 改為 60px。 */
-          .html5-video-player:not(.ytp-autohide) ${_OVERLAY_TAG} {
-            --sk-cue-bottom: calc(60px + var(--sk-cue-size, 22px));
-          }
-          /* commit 5c.6:雙語模式(host[bilingual] attr)overlay 從預設 30px 推到 90px
-             避開原生英文 CC(原生 30-40px from bottom)。chrome 顯示時再多推一段
-             避開控制列 + 已上抬的原生 CC(YouTube 自己把原生 CC 推到約 82px)。 */
-          ${_OVERLAY_TAG}[bilingual] {
-            --sk-cue-bottom: 90px;
-          }
-          .html5-video-player:not(.ytp-autohide) ${_OVERLAY_TAG}[bilingual] {
-            --sk-cue-bottom: calc(140px + var(--sk-cue-size, 22px));
-          }
-        `;
-        document.head.appendChild(style);
-      }
       root.classList.add(_ASR_PLAYER_CLASS);
     } else {
       root.classList.remove(_ASR_PLAYER_CLASS);
@@ -965,6 +1152,10 @@
     }
     const currentMs = YT.videoEl.currentTime * 1000;
     const cue = _findActiveCue(currentMs);
+    // v1.8.20: ASR + 純中文模式下,replaceSegmentEl L1909 會 early return 跳過
+    // L1934 的 hideCaptionStatus → 「翻譯中…」永遠殘留。改在 overlay 寫入時若有
+    // 中文 cue 命中,就主動 hide(冪等,沒 status indicator 時直接 return)。
+    if (cue && cue.targetText) hideCaptionStatus();
     _setOverlayContent(cue ? cue.targetText : '');
   }
 
@@ -1104,7 +1295,7 @@
     });
     const inputJson = JSON.stringify(inputArr);
 
-    const res = await browser.runtime.sendMessage({
+    const res = await SK.safeSendMessage({
       type: 'TRANSLATE_ASR_SUBTITLE_BATCH',
       payload: { texts: [inputJson], glossary: null },
     });
@@ -1268,7 +1459,7 @@
     const _batchApiMs = new Array(batches.length).fill(0);
 
     const _runBatch = (batchUnits, b) =>
-      browser.runtime.sendMessage({
+      SK.safeSendMessage({
         type: 'TRANSLATE_SUBTITLE_BATCH',
         payload: { texts: batchUnits.map(u => u.text), glossary: null },
       }).then(res => {
@@ -1504,7 +1695,7 @@
         };
 
         const _runBatch = (batchUnits, b) =>
-          browser.runtime.sendMessage({
+          SK.safeSendMessage({
             type: _subtitleMsgType,
             payload: { texts: batchUnits.map(u => u.text), glossary: null },
           }).then(res => {
@@ -1572,7 +1763,7 @@
           };
           browser.runtime.onMessage.addListener(onMessage);
 
-          browser.runtime.sendMessage({
+          SK.safeSendMessage({
             type: 'TRANSLATE_SUBTITLE_BATCH_STREAM',
             payload: { texts: batchUnits.map(u => u.text), glossary: null, streamId },
           }).then((resp) => {
@@ -1641,7 +1832,7 @@
               stream.cleanup();
               if (r.kind === 'timeout') {
                 SK.sendLog('warn', 'youtube', 'streaming first_chunk timeout, falling back to non-streaming', { streamId: stream.streamId });
-                browser.runtime.sendMessage({ type: 'STREAMING_ABORT', payload: { streamId: stream.streamId } }).catch(() => {});
+                SK.safeSendMessage({ type: 'STREAMING_ABORT', payload: { streamId: stream.streamId } }).catch(() => {});
               }
               batch0NeedsFallback = true;
             }
@@ -1814,7 +2005,8 @@
     _debugUpdate(`seeked → 重設翻譯起點 ${Math.round(newWindowStart/1000)}s`);
     // v1.2.57: 若跳到尚未翻譯的視窗，立刻顯示「翻譯中…」提示
     // （translateWindowFrom 內部有防重入，已翻視窗會直接 return，不需要提示）
-    if (!YT.translatedWindows.has(newWindowStart)) {
+    // v1.8.16: 若當前畫面已有中文字幕,跳過提示避免打擾
+    if (!YT.translatedWindows.has(newWindowStart) && !_hasVisibleChineseCaption()) {
       showCaptionStatus('翻譯中…');
     }
     // v1.2.54: translateWindowFrom 內部用 translatingWindows Set 防重入，無需外部 guard
@@ -1914,6 +2106,8 @@
         const isBilingual = SK.YT.config?.bilingualMode === true;
         if (isBilingual && cached) {
           const html = `${_escapeHtml(original)}<br>${_escapeHtml(cached)}`;
+          // AMO source review: html = _escapeHtml(原文) + <br> + _escapeHtml(譯文),雙重 escape,
+          // <br> 是 dev literal。user input(YouTube 字幕原文)與 LLM 譯文都已 escape。
           if (el.innerHTML !== html) el.innerHTML = html;
         } else {
           // v1.8.9: 過長譯文比照 ASR 走 _wrapTargetText 切點 + <br>,避免衝出 video 寬
@@ -1960,6 +2154,7 @@
   async function flushOnTheFly() {
     const YT = SK.YT;
     if (YT.pendingQueue.size === 0 || YT.flushing) return;
+    if (!YT.active) return; // v1.8.20: 進場 guard,session 已 stop 直接放棄
     YT.flushing = true;
 
     const queue = new Map(YT.pendingQueue);
@@ -1974,11 +2169,17 @@
     }
 
     try {
-      const res = await browser.runtime.sendMessage({
+      const res = await SK.safeSendMessage({
         type: 'TRANSLATE_SUBTITLE_BATCH',
         payload: { texts, glossary: null },
       });
       if (!res?.ok) throw new Error(res?.error || '翻譯失敗');
+      // v1.8.20: await 後再次檢查 active——stop 在 await 期間發生時放棄寫入,
+      // 否則寫進已被 stopYouTubeTranslation 重置的新 captionMap 污染下個 session。
+      if (!SK.YT.active) {
+        YT.flushing = false;
+        return;
+      }
       // v1.2.39: 累積並記錄 on-the-fly 批次用量
       _logWindowUsage(texts.length, res.usage);
 
@@ -1995,6 +2196,7 @@
             if (isBilingual && trans) {
               const original = el.textContent.trim();
               const html = `${_escapeHtml(original)}<br>${_escapeHtml(trans)}`;
+              // AMO source review: html = _escapeHtml(原文) + <br> + _escapeHtml(譯文),雙重 escape。
               if (el.innerHTML !== html) el.innerHTML = html;
             } else {
               // v1.8.9: 過長譯文比照 ASR 走 _wrapTargetText 切點 + <br>
@@ -2071,7 +2273,7 @@
     // 取得本次使用的模型名稱（from config，若設定了 ytModel 就帶入）
     const model = (YT.config?.model) || undefined;
 
-    browser.runtime.sendMessage({
+    SK.safeSendMessage({
       type: 'LOG_USAGE',
       payload: {
         url:   location.href,
@@ -2112,6 +2314,7 @@
     YT.rawSegments        = [];         // v1.3.5: 補齊（原僅在 yt-navigate-finish 重置）
     YT.captionMap         = new Map();
     YT.pendingQueue       = new Map();
+    YT.flushing           = false;       // v1.8.20: 確保下個 session 重啟後 flushOnTheFly 不被舊 flag 卡住
     YT.isAsr              = false;
     YT.displayCues        = [];         // G 路徑:清 overlay 顯示單位
     _setAsrHidingMode(false);
@@ -2125,11 +2328,19 @@
 
   // ─── 主入口：Alt+S ─────────────────────────────────────────
 
-  SK.translateYouTubeSubtitles = async function translateYouTubeSubtitles() {
+  // v1.8.16: source 區分使用者明示 toggle vs 自動啟動。
+  //   'manual'(預設,Alt+S / popup):active 時 toggle 還原(再按一次語義)
+  //   'auto'(content-script init / SPA nav restart):active 時 no-op,
+  //     避免兩條自動鬧鐘在 reload 後 race 互相關掉對方。
+  SK.translateYouTubeSubtitles = async function translateYouTubeSubtitles({ source = 'manual' } = {}) {
     const YT = SK.YT;
 
-    // 切換：再按一次還原
     if (YT.active) {
+      if (source === 'auto') {
+        SK.sendLog('info', 'youtube', 'auto-activate skipped (already active)', { rawSegments: YT.rawSegments.length });
+        return;
+      }
+      // manual:再按一次還原
       stopYouTubeTranslation();
       SK.showToast('success', '已還原原文字幕');
       setTimeout(() => SK.hideToast(), 2000);
@@ -2170,7 +2381,7 @@
     if (YT.rawSegments.length > 0) {
       // 已有快取（interceptor 在 activate 之前就攔截到了）→ 直接開始翻譯
       _debugUpdate(`已有 ${YT.rawSegments.length} 條字幕，開始翻譯`);
-      showCaptionStatus('翻譯中…');
+      if (!_hasVisibleChineseCaption()) showCaptionStatus('翻譯中…');
       const video = document.querySelector('video');
       const currentMs = video ? Math.floor(video.currentTime * 1000) : 0;
       const windowSizeMs = (config.windowSizeS || 30) * 1000;
@@ -2234,6 +2445,8 @@
     YT.videoId            = getVideoIdFromUrl();
     SK.sendLog('info', 'youtube', 'SPA navigation reset', { wasActive, newVideoId: YT.videoId });
 
+    SK.YT.Borderless?.reapplyOnNavigation();
+
     // v1.3.1: SPA 導航後自動重啟字幕翻譯
     // 條件：之前字幕翻譯已啟動（wasActive），或 ytSubtitle.autoTranslate 設定開啟
     // 若導航到非 watch 頁（例如首頁），略過。
@@ -2247,9 +2460,11 @@
           wasActive, autoTranslate: saved.ytSubtitle?.autoTranslate,
         });
         setTimeout(() => {
-          // 若使用者在等待期間已手動操作（active 變 true），不重複啟動
-          if (!SK.YT.active && SK.isYouTubePage?.()) {
-            SK.translateYouTubeSubtitles?.().catch(err => {
+          // v1.8.16: 改傳 source: 'auto',若 active 走 no-op 而非 toggle stop。
+          //   原本就有 !SK.YT.active 前置 guard,但兩條保險(前置 guard + source='auto')
+          //   覆蓋 setTimeout 排隊期間 active 才被另一條 caller 拉起的 race。
+          if (SK.isYouTubePage?.()) {
+            SK.translateYouTubeSubtitles?.({ source: 'auto' }).catch(err => {
               SK.sendLog('warn', 'youtube', 'SPA nav auto-subtitle restart failed', { error: err.message });
             });
           }
