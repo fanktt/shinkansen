@@ -22,56 +22,75 @@ const { contentScriptCodes } = require('./helpers/create-env.cjs');
  * 同時攔截 chrome.runtime.sendMessage，記錄被送出的訊息。
  */
 function createEnvWithNavType({ navType, url = 'https://example.com/page-a' }) {
-  const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
-    url,
-    runScripts: 'dangerously',
-    pretendToBeVisual: true,
-  });
-  const win = dom.window;
-
-  // Mock performance.getEntriesByType：只覆寫 'navigation' 這條路徑
-  const origGet = win.performance.getEntriesByType?.bind(win.performance);
-  win.performance.getEntriesByType = (type) => {
-    if (type === 'navigation') {
-      return navType == null ? [] : [{ type: navType }];
-    }
-    return origGet ? origGet(type) : [];
-  };
-
-  const sentMessages = [];
-  const chromeMock = {
-    runtime: {
-      sendMessage: jest.fn().mockImplementation((msg) => {
-        sentMessages.push(msg);
-        // STICKY_QUERY 預設回 no-translate，讓這組 test 聚焦在「CLEAR 有沒有被送」
-        if (msg?.type === 'STICKY_QUERY') {
-          return Promise.resolve({ ok: true, shouldTranslate: false, slot: null });
-        }
-        return Promise.resolve({ ok: true });
-      }),
-      getManifest: jest.fn().mockReturnValue({ version: '1.4.18' }),
-      onMessage: { addListener: jest.fn() },
-    },
-    storage: {
-      sync: {
-        get: jest.fn().mockImplementation(() => Promise.resolve({})),
-      },
-      onChanged: { addListener: jest.fn() },
-    },
-  };
-  win.chrome = chromeMock;
-
-  for (const code of contentScriptCodes) {
-    win.eval(code);
-  }
-
-  return {
-    win,
-    chrome: chromeMock,
-    sentMessages,
-    cleanup: () => win.close(),
-  };
-}
+   const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+     url,
+     runScripts: 'dangerously',
+     pretendToBeVisual: true,
+   });
+   const win = dom.window;
+ 
+   // Mock performance.getEntriesByType：只覆寫 'navigation' 這條路徑
+   const origGet = win.performance.getEntriesByType?.bind(win.performance);
+   win.performance.getEntriesByType = (type) => {
+     if (type === 'navigation') {
+       return navType == null ? [] : [{ type: navType }];
+     }
+     return origGet ? origGet(type) : [];
+   };
+ 
+   const sentMessages = [];
+   const chromeMock = {
+     runtime: {
+       sendMessage: jest.fn().mockImplementation((msg) => {
+         sentMessages.push(msg);
+         // STICKY_QUERY 預設回 no-translate，讓這組 test 聚焦在「CLEAR 有沒有被送」
+         if (msg?.type === 'STICKY_QUERY') {
+           return Promise.resolve({ ok: true, shouldTranslate: false, slot: null });
+         }
+         return Promise.resolve({ ok: true });
+       }),
+       getManifest: jest.fn().mockReturnValue({ version: '1.4.18' }),
+       onMessage: { addListener: jest.fn() },
+       id: 'mock-extension-id',
+     },
+     storage: {
+       sync: {
+         get: jest.fn().mockImplementation(() => Promise.resolve({})),
+       },
+       onChanged: { addListener: jest.fn() },
+     },
+   };
+   win.chrome = chromeMock;
+   // globalThis.chrome 用於 SK.safeSendMessage 檢查 chrome.runtime.id
+   globalThis.chrome = chromeMock;
+ 
+   for (const code of contentScriptCodes) {
+     win.eval(code);
+   }
+ 
+   // 在 content script 載入後，mock SK.safeSendMessage 來攔截訊息
+   // (v1.8+ 改用 SK.safeSendMessage 而非直接 browser.runtime.sendMessage)
+   const origSafeSendMessage = win.__SK?.safeSendMessage;
+   if (win.__SK) {
+     win.__SK.safeSendMessage = jest.fn().mockImplementation((msg) => {
+       sentMessages.push(msg);
+       if (msg?.type === 'STICKY_QUERY') {
+         return Promise.resolve({ ok: true, shouldTranslate: false, slot: null });
+       }
+       return Promise.resolve({ ok: true });
+     });
+   }
+ 
+   return {
+     win,
+     chrome: chromeMock,
+     sentMessages,
+     cleanup: () => {
+       win.close();
+       delete globalThis.chrome;
+     },
+   };
+ }
 
 // init IIFE 是 async，要等它跑完。檢查是否已送 STICKY_QUERY 或 STICKY_CLEAR 任一個
 // （兩條路徑最後至少會送其一），等到訊息出現或 timeout。
